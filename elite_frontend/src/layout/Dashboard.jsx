@@ -161,7 +161,7 @@ const Dashboard = ({ user, onLogout, isLoading }) => {
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip contentStyle={darkMode ? { backgroundColor: "#333", color: "#FFF3B0" } : {}} />
+                      <Tooltip contentStyle={darkMode ? { backgroundColor: "#333", color: "#FFF3B1" } : {}} />
                       <Legend />
                     </PieChart>
                   </ResponsiveContainer>
@@ -237,6 +237,7 @@ const Dashboard = ({ user, onLogout, isLoading }) => {
       </div>
     </div>
   );
+
 };
 
 export default Dashboard;
