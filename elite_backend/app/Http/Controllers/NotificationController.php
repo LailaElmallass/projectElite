@@ -8,29 +8,50 @@ use Illuminate\Support\Facades\Auth;
 
 class NotificationController extends Controller
 {
-    // Afficher toutes les notifications
+    // Notifications générales pour Navbar (exclut candidatures)
     public function index()
     {
-        // Retourner uniquement les notifications de l'utilisateur connecté si nécessaire
-        return response()->json(Notification::all());
+        $user = Auth::user();
+        return response()->json(
+            Notification::where('recipient_id', $user->id)
+                ->where('title', '!=', 'Nouvelle candidature')
+                ->orderBy('created_at', 'desc')
+                ->get()
+        );
     }
 
-    // Ajouter une nouvelle notification (réservé aux admins)
+    // Notifications pour entreprise (inclut candidatures)
+    public function enterpriseNotifications()
+    {
+        $user = Auth::user();
+        if ($user->role !== 'entreprise') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        return response()->json(
+            Notification::where('recipient_id', $user->id)
+                ->orderBy('created_at', 'desc')
+                ->get()
+        );
+    }
+
+    // Créer une notification (admin)
     public function store(Request $request)
     {
         if (Auth::user()->role !== 'admin') {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        $request->validate([
+        $validated = $request->validate([
             'title' => 'required|string|max:255',
             'message' => 'required|string',
+            'recipient_id' => 'required|exists:users,id',
         ]);
 
         $notification = Notification::create([
-            'title' => $request->title,
-            'message' => $request->message,
+            'title' => $validated['title'],
+            'message' => $validated['message'],
             'user_id' => Auth::id(),
+            'recipient_id' => $validated['recipient_id'],
         ]);
 
         return response()->json($notification, 201);
@@ -39,16 +60,46 @@ class NotificationController extends Controller
     // Marquer une notification comme lue
     public function markAsRead($id)
     {
-        $notification = Notification::findOrFail($id);
-        
-        // Optionnel : Vérifier si l'utilisateur a le droit de marquer cette notification (par exemple, si elle lui appartient)
-        // if ($notification->user_id !== Auth::id()) {
-        //     return response()->json(['error' => 'Unauthorized'], 403);
-        // }
-
+        $notification = Notification::where('recipient_id', Auth::id())
+            ->where('id', $id)
+            ->firstOrFail();
         $notification->is_read = true;
         $notification->save();
 
         return response()->json(['message' => 'Notification marquée comme lue', 'notification' => $notification]);
+    }
+
+    public function getEnterpriseNotifications()
+    {
+        $user = Auth::user();
+        if (!$user || $user->role !== 'entreprise') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $notifications = Notification::where('recipient_id', $user->id)->get();
+        return response()->json($notifications);
+    }
+
+    public function assignUsers(Request $request, $id)
+    {
+        $user = Auth::user();
+        if (!$user || $user->role !== 'entreprise') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $notification = Notification::findOrFail($id);
+        if ($notification->recipient_id !== $user->id) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $request->validate([
+            'user_ids' => 'required|array',
+            'user_ids.*' => 'exists:users,id',
+        ]);
+
+        // Sync users to the notification
+        $notification->users()->sync($request->user_ids);
+
+        return response()->json(['message' => 'Users assigned successfully']);
     }
 }

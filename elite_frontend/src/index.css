@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+
+.dark-swal {
+  background-color: #1a1a1a !important;
+  color: #fffef0 !important;
+}
+
+.dark-swal .swal2-title {
+  color: #ffd926 !important;
+}
+
+.dark-swal .swal2-html-container {
+  color: #fffef0 !important;
+}
+
 :root {
   --background: 0 0% 100%;
   --foreground: 0 0% 3.9%;

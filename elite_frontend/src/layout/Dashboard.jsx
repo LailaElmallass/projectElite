@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell 
 } from 'recharts';
@@ -8,6 +8,7 @@ import Sidebar from '../components/Sidebar';
 import Navbar from '../components/Navbar';
 import { useDarkMode } from '../DarkModeContext';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 
 const performanceData = [
   { name: 'Communication', score: 85 },
@@ -38,7 +39,7 @@ const suggestedJobs = [
 
 const COLORS = ['#FFBB28', '#FF8042', '#00C49F', '#0088FE'];
 
-const Dashboard = ({ user, onLogout }) => {
+const Dashboard = ({ user, onLogout, isLoading }) => {
   const { t } = useTranslation();
   const { darkMode } = useDarkMode();
   const [isSidebarOpen, setSidebarOpen] = useState(false);
@@ -46,6 +47,13 @@ const Dashboard = ({ user, onLogout }) => {
   const [filteredCareer, setFilteredCareer] = useState(careerData);
   const [filteredCourses, setFilteredCourses] = useState(recommendedCourses);
   const [filteredJobs, setFilteredJobs] = useState(suggestedJobs);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isLoading && !user) {
+      navigate('/signin');
+    }
+  }, [user, isLoading, navigate]);
 
   const handleSearch = (query) => {
     const lowerQuery = query.toLowerCase();
@@ -62,6 +70,10 @@ const Dashboard = ({ user, onLogout }) => {
     setFilteredJobs(newJobs.length > 0 ? newJobs : suggestedJobs);
   };
 
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center">Chargement...</div>;
+
+  const fullName = user?.nomComplet || user?.name || 'Invité';
+
   return (
     <div className={cn("min-h-screen", darkMode ? "dark bg-elite-black-900" : "bg-elite-yellow-50")}>
       <Navbar 
@@ -75,12 +87,12 @@ const Dashboard = ({ user, onLogout }) => {
         <Sidebar isOpen={isSidebarOpen} setIsOpen={setSidebarOpen} />
         <main className={cn("flex-1 p-6 transition-all duration-300", isSidebarOpen ? "lg:pl-64 xl:pl-72" : "pl-0")}>
           <div className="container mx-auto">
-          <div className="mb-8">
+            <div className="mb-8">
               <h1 className={cn("text-2xl font-bold mb-2", darkMode ? "text-elite-yellow-100" : "text-elite-black-800")}>
                 {t('dashboard')}
               </h1>
               <p className={cn("text-sm", darkMode ? "text-elite-yellow-400" : "text-elite-black-600")}>
-                {user ? t('welcome', {name: user.name}) : t('welcomeGuest')}
+                Bienvenue <strong>{fullName}</strong> ! Voici un aperçu de votre parcours et vos opportunités.
               </p>
             </div>
 
@@ -187,36 +199,36 @@ const Dashboard = ({ user, onLogout }) => {
                     </div>
                   ))}
                 </div>
-              </div>
-
-              <div className={cn("p-6 rounded-lg shadow-md", darkMode ? "bg-elite-black-800" : "bg-white")}>
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className={cn("text-lg font-semibold", darkMode ? "text-elite-yellow-100" : "text-elite-black-900")}>
-                    {t('suggestedJobs')}
-                  </h3>
-                  <button className={cn("text-sm flex items-center", darkMode ? "text-elite-yellow-400" : "text-elite-black-700")}>
-                    {t('explore')} <ChevronRight className="h-4 w-4 ml-1" />
-                  </button>
                 </div>
-                <div className="space-y-4">
-                  {filteredJobs.map((job, index) => (
-                    <div key={index} className={cn("flex items-center p-3 border rounded-md hover:bg-elite-red-500/10 transition-colors cursor-pointer", darkMode ? "border-elite-black-700" : "border-elite-black-200")}>
-                      <div className={cn("w-10 h-10 rounded-md flex items-center justify-center text-elite-yellow-400 mr-4", darkMode ? "bg-elite-yellow-400/10" : "bg-elite-yellow-400/20")}>
-                        {index + 1}
+
+                <div className={cn("p-6 rounded-lg shadow-md", darkMode ? "bg-elite-black-800" : "bg-white")}>
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className={cn("text-lg font-semibold", darkMode ? "text-elite-yellow-100" : "text-elite-black-900")}>
+                      {t('suggestedJobs')}
+                    </h3>
+                    <button className={cn("text-sm flex items-center", darkMode ? "text-elite-yellow-400" : "text-elite-black-700")}>
+                      {t('explore')} <ChevronRight className="h-4 w-4 ml-1" />
+                    </button>
+                  </div>
+                  <div className="space-y-4">
+                    {filteredJobs.map((job, index) => (
+                      <div key={index} className={cn("flex items-center p-3 border rounded-md hover:bg-elite-red-500/10 transition-colors cursor-pointer", darkMode ? "border-elite-black-700" : "border-elite-black-200")}>
+                        <div className={cn("w-10 h-10 rounded-md flex items-center justify-center text-elite-yellow-400 mr-4", darkMode ? "bg-elite-yellow-400/10" : "bg-elite-yellow-400/20")}>
+                          {index + 1}
+                        </div>
+                        <div className="flex-1">
+                          <h4 className={cn("font-medium", darkMode ? "text-elite-yellow-100" : "text-elite-black-900")}>
+                            {job.title}
+                          </h4>
+                          <p className={cn("text-xs", darkMode ? "text-elite-yellow-400" : "text-elite-black-600")}>
+                            {t('sector')}: {job.sector}
+                          </p>
+                        </div>
+                        <div className={cn("px-2 py-1 text-xs rounded", darkMode ? "bg-elite-yellow-400/10 text-elite-yellow-400" : "bg-elite-yellow-400/20 text-elite-yellow-600")}>
+                          {t('match')} {job.match}
+                        </div>
                       </div>
-                      <div className="flex-1">
-                        <h4 className={cn("font-medium", darkMode ? "text-elite-yellow-100" : "text-elite-black-900")}>
-                          {job.title}
-                        </h4>
-                        <p className={cn("text-xs", darkMode ? "text-elite-yellow-400" : "text-elite-black-600")}>
-                          {t('sector')}: {job.sector}
-                        </p>
-                      </div>
-                      <div className={cn("px-2 py-1 text-xs rounded", darkMode ? "bg-elite-yellow-400/10 text-elite-yellow-400" : "bg-elite-yellow-400/20 text-elite-yellow-600")}>
-                        {t('match')} {job.match}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               </div>
             </div>

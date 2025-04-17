@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Check, X, ArrowRight, AlertCircle, Brain, Edit, Trash2, PlusCircle } from 'lucide-react';
-import api from '../lib/api';
-import { Link, useLocation } from 'react-router-dom';
+import { Check, ArrowRight, Sun, Moon, Edit, Trash2, PlusCircle } from 'lucide-react';
+import api from '@/lib/api';
+import { useNavigate } from 'react-router-dom';
+import Navbar from '@/components/Navbar';
+import Sidebar from '@/components/Sidebar';
+import Swal from 'sweetalert2';
 
-const Tests = () => {
+const Tests = ({ user, onLogout, setUser }) => {
   const [tests, setTests] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [activeTest, setActiveTest] = useState(null);
@@ -12,70 +15,139 @@ const Tests = () => {
   const [showResults, setShowResults] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [newQuestion, setNewQuestion] = useState({
-    test_id: '',
-    question: '',
-    options: ['', '', '', ''],
-    correct_answer_index: 0
-  });
-  const [newTest, setNewTest] = useState({
+  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isEditing, setIsEditing] = useState(null);
+  const [formData, setFormData] = useState({
     title: '',
     duration: '',
-    description: ''
+    description: '',
+    target_audience: 'etudiant_maroc', // Matches DB default
+    is_general: false,
+    is_student: null,
+    questions: [],
   });
-  const [editQuestion, setEditQuestion] = useState(null);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addMode, setAddMode] = useState(null); // 'question' or 'test'
-  const [showQuestions, setShowQuestions] = useState(false); // New state to control questions visibility
-  const location = useLocation();
-  const isAdmin = localStorage.getItem('user') 
-    ? JSON.parse(localStorage.getItem('user')).role === 'admin' 
-    : false;
+  const navigate = useNavigate();
+
+  const audienceOptions = [
+    { value: 'etudiant_maroc', label: 'Étudiants Maroc' },
+    { value: 'etudiant_etranger', label: 'Étudiants Étranger' },
+    { value: 'entrepreneur', label: 'Entrepreneur' },
+    { value: 'salarie_etat', label: 'Salarié Public' },
+    { value: 'salarie_prive', label: 'Salarié Privé' },
+  ];
 
   useEffect(() => {
-    fetchTests();
-    if (location.state?.showAddForm) {
-      setShowAddForm(true);
-      setAddMode('question');
-      setShowQuestions(false); // Hide questions if adding from navbar
+    if (!user) {
+      navigate('/signin');
+      return;
     }
-  }, [location]);
+    if (user?.is_first_time && user.role !== 'admin') {
+      navigate('/test-general');
+      return;
+    }
+    fetchTests();
+  }, [user, navigate]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDarkMode);
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
+
+  const toggleTheme = () => setIsDarkMode((prev) => !prev);
 
   const fetchTests = async () => {
     try {
       setLoading(true);
       const response = await api.get('/tests');
-      setTests(response.data);
+      const fetchedTests = Array.isArray(response.data.data.tests) ? response.data.data.tests : [];
+      setTests(fetchedTests);
+
+      if (response.data.data.needs_audience_selection && user.role !== 'admin') {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Profil incomplet',
+          text: 'Veuillez compléter votre profil pour accéder aux tests.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
+        navigate('/test-general');
+      } else if (fetchedTests.length === 0 && user.role !== 'admin') {
+        Swal.fire({
+          icon: 'info',
+          title: 'Aucun test disponible',
+          text: 'Aucun test ne correspond à votre profil pour le moment.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
+      }
     } catch (error) {
-      console.error('Erreur lors de la récupération des tests :', error);
+      console.error('Error fetching tests:', error);
+      setTests([]);
+      if (error.response?.status === 401) {
+        onLogout();
+        navigate('/signin');
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'Erreur',
+          text: 'Une erreur est survenue lors du chargement des tests.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchQuestions = async (testId) => {
+  const startTest = async (testId) => {
     try {
       setLoading(true);
       const response = await api.get(`/tests/${testId}/questions`);
-      setQuestions(response.data.questions || []);
-      setShowQuestions(true); // Show questions
-      setShowAddForm(false); // Hide add form
-      setEditQuestion(null); // Hide edit form
+      const fetchedQuestions = response.data.data.questions.map((q) => ({
+        ...q,
+        options: typeof q.options === 'string' ? JSON.parse(q.options) : q.options,
+      }));
+      if (fetchedQuestions.length === 0) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Erreur',
+          text: 'Ce test n’a pas de questions disponibles.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
+        return;
+      }
+      setQuestions(fetchedQuestions);
+      setActiveTest(testId);
+      setCurrentQuestion(0);
+      setAnswers({});
+      setShowResults(false);
+      setFeedback(null);
     } catch (error) {
-      console.error('Erreur lors de la récupération des questions :', error);
-      setQuestions([]);
+      console.error('Error fetching questions:', error);
+      Swal.fire({
+        icon: 'error',
+        title: 'Erreur',
+        text: 'Impossible de charger les questions du test.',
+        toast: true,
+        position: 'top',
+        timer: 3000,
+        showConfirmButton: false,
+      });
     } finally {
       setLoading(false);
     }
-  };
-
-  const startTest = (testId) => {
-    setActiveTest(testId);
-    setCurrentQuestion(0);
-    setAnswers({});
-    setShowResults(false);
-    setFeedback(null);
-    fetchQuestions(testId);
   };
 
   const handleAnswer = (questionId, optionIndex) => {
@@ -88,19 +160,39 @@ const Tests = () => {
     } else {
       try {
         setLoading(true);
+        if (Object.keys(answers).length === 0) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Aucune réponse',
+            text: 'Veuillez répondre à au moins une question avant de soumettre.',
+            toast: true,
+            position: 'top',
+            timer: 3000,
+            showConfirmButton: false,
+          });
+          return;
+        }
         const response = await api.post('/tests/submit', {
           test_id: activeTest,
           answers,
         });
-        setFeedback(response.data.feedback);
+        setFeedback(response.data.data.feedback);
         setShowResults(true);
       } catch (error) {
-        console.error('Erreur lors de la soumission du test :', error);
-        const errorMessage = error.response?.data?.error || 'Erreur serveur inconnue';
+        console.error('Error submitting test:', error);
+        Swal.fire({
+          icon: 'error',
+          title: 'Erreur',
+          text: error.response?.data?.message || 'Erreur lors de la soumission du test.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
         setFeedback({
-          points_forts: ['Erreur lors de la soumission'],
-          domaines_d_amélioration: [errorMessage],
-          recommandations: ['Vérifiez votre connexion ou contactez un administrateur'],
+          points_forts: ['Effort fourni'],
+          domaines_d_amélioration: ['Erreur réseau détectée'],
+          recommandations: ['Vérifiez votre connexion et réessayez'],
         });
         setShowResults(true);
       } finally {
@@ -114,255 +206,584 @@ const Tests = () => {
     setShowResults(false);
     setFeedback(null);
     setQuestions([]);
-    setShowAddForm(false);
-    setAddMode(null);
-    setShowQuestions(false);
+    setCurrentQuestion(0);
+    setAnswers({});
   };
 
-  const handleAddQuestion = async (e) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      await api.post('/tests/questions', newQuestion);
-      alert('Question ajoutée avec succès !');
-      setNewQuestion({ test_id: '', question: '', options: ['', '', '', ''], correct_answer_index: 0 });
-      fetchQuestions(newQuestion.test_id);
-      setShowAddForm(false);
-      setAddMode(null);
-    } catch (error) {
-      console.error('Erreur lors de l’ajout de la question :', error);
-      alert('Erreur lors de l’ajout de la question.');
-    } finally {
-      setLoading(false);
+  const addQuestion = () => {
+    setFormData({
+      ...formData,
+      questions: [
+        ...formData.questions,
+        { question: '', options: ['', '', '', ''], correct_answer_index: 0 },
+      ],
+    });
+  };
+
+  const removeQuestion = (index) => {
+    const newQuestions = formData.questions.filter((_, i) => i !== index);
+    setFormData({ ...formData, questions: newQuestions });
+  };
+
+  const validateFormData = () => {
+    if (!isEditing && (!formData.title?.trim() || !formData.duration?.trim() || !formData.description?.trim())) {
+      return 'Le titre, la durée et la description sont requis pour créer un test.';
     }
-  };
-
-  const handleAddTest = async (e) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      await api.post('/tests', newTest);
-      alert('Test ajouté avec succès !');
-      setNewTest({ title: '', duration: '', description: '' });
-      fetchTests();
-      setShowAddForm(false);
-      setAddMode(null);
-    } catch (error) {
-      console.error('Erreur lors de l’ajout du test :', error);
-      alert('Erreur lors de l’ajout du test.');
-    } finally {
-      setLoading(false);
+    if (formData.is_general && (formData.is_student === null || formData.is_student === undefined)) {
+      return 'Le statut étudiant doit être défini (Oui ou Non) pour les tests généraux.';
     }
-  };
-
-  const handleEditQuestion = async (e) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      await api.put(`/tests/questions/${editQuestion.id}`, editQuestion);
-      alert('Question modifiée avec succès !');
-      fetchQuestions(editQuestion.test_id);
-      setEditQuestion(null);
-    } catch (error) {
-      console.error('Erreur lors de la modification de la question :', error);
-      alert('Erreur lors de la modification de la question.');
-    } finally {
-      setLoading(false);
+    const validAudiences = ['etudiant_maroc', 'etudiant_etranger', 'entrepreneur', 'salarie_etat', 'salarie_prive'];
+    if (!formData.target_audience || !validAudiences.includes(formData.target_audience)) {
+      console.log('Validation failed: Invalid target_audience', { target_audience: formData.target_audience });
+      return 'Une audience cible valide est requise.';
     }
-  };
-
-  const handleDeleteQuestion = async (questionId, testId) => {
-    if (window.confirm('Voulez-vous vraiment supprimer cette question ?')) {
-      try {
-        setLoading(true);
-        await api.delete(`/tests/questions/${questionId}`);
-        alert('Question supprimée avec succès !');
-        fetchQuestions(testId);
-      } catch (error) {
-        console.error('Erreur lors de la suppression de la question :', error);
-        alert('Erreur lors de la suppression de la question.');
-      } finally {
-        setLoading(false);
+    if (!formData.questions?.length) {
+      return 'Au moins une question est requise.';
+    }
+    for (let i = 0; i < formData.questions.length; i++) {
+      const q = formData.questions[i];
+      if (!q.question?.trim()) {
+        return `La question ${i + 1} est vide.`;
       }
+      const validOptions = q.options?.filter((opt) => opt?.trim()) || [];
+      if (validOptions.length < 2) {
+        return `La question ${i + 1} doit avoir au moins 2 options non vides.`;
+      }
+      const correctIndex = Number(q.correct_answer_index);
+      if (isNaN(correctIndex) || correctIndex < 0 || correctIndex >= validOptions.length) {
+        return `L’index de la réponse correcte pour la question ${i + 1} est invalide (doit être entre 0 et ${validOptions.length - 1}).`;
+      }
+    }
+    return null;
+  };
+
+  const handleFormChange = (e, index = null, optionIndex = null) => {
+    const { name, value, type, checked } = e.target;
+    if (name === 'is_general') {
+      setFormData({
+        ...formData,
+        is_general: checked,
+        target_audience: checked ? 'etudiant_maroc' : formData.target_audience || 'etudiant_maroc',
+        is_student: checked ? formData.is_student ?? false : null,
+      });
+      console.log('is_general changed:', { is_general: checked, target_audience: checked ? 'etudiant_maroc' : formData.target_audience || 'etudiant_maroc' });
+    } else if (name === 'is_student') {
+      setFormData({
+        ...formData,
+        is_student: value === 'true' ? true : value === 'false' ? false : null,
+      });
+    } else if (name === 'target_audience') {
+      const newValue = value || 'etudiant_maroc';
+      setFormData({
+        ...formData,
+        target_audience: newValue,
+      });
+      console.log('target_audience changed:', { old: formData.target_audience, new: newValue });
+    } else if (index !== null && optionIndex !== null) {
+      const newQuestions = [...formData.questions];
+      newQuestions[index].options[optionIndex] = value;
+      setFormData({ ...formData, questions: newQuestions });
+    } else if (index !== null && name === 'question') {
+      const newQuestions = [...formData.questions];
+      newQuestions[index][name] = value;
+      setFormData({ ...formData, questions: newQuestions });
+    } else if (index !== null && name === 'correct_answer_index') {
+      const newQuestions = [...formData.questions];
+      newQuestions[index][name] = parseInt(value) || 0;
+      setFormData({ ...formData, questions: newQuestions });
+    } else {
+      setFormData({
+        ...formData,
+        [name]: type === 'checkbox' ? checked : value === '' ? null : value,
+      });
+    }
+  };
+
+  const handleSubmitForm = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      console.log('Form data before validation:', JSON.stringify(formData, null, 2));
+      const validationError = validateFormData();
+      if (validationError) {
+        console.log('Validation error:', validationError);
+        Swal.fire({
+          icon: 'error',
+          title: 'Erreur de validation',
+          text: validationError,
+          toast: true,
+          position: 'top',
+          timer: 5000,
+          showConfirmButton: false,
+        });
+        return;
+      }
+
+      const payload = {
+        title: formData.title?.trim() || undefined,
+        duration: formData.duration?.trim() || undefined,
+        description: formData.description?.trim() || undefined,
+        is_general: !!formData.is_general,
+        target_audience: formData.target_audience || 'etudiant_maroc',
+        is_student: formData.is_general ? (formData.is_student ?? false) : null,
+        questions: formData.questions
+          .map((q) => {
+            const question = {
+              question: q.question?.trim() || undefined,
+              options: q.options?.filter((opt) => opt?.trim()) || [],
+              correct_answer_index: Number(q.correct_answer_index) || 0,
+            };
+            if (q.id && Number.isInteger(Number(q.id)) && Number(q.id) > 0) {
+              question.id = Number(q.id);
+            }
+            return question;
+          })
+          .filter((q) => q.question && q.options.length >= 2),
+      };
+
+      console.log('Submitting payload:', JSON.stringify(payload, null, 2));
+
+      if (isEditing) {
+        const response = await api.put(`/tests/${isEditing}`, payload);
+        Swal.fire({
+          icon: 'success',
+          title: 'Test mis à jour',
+          text: 'Le test a été mis à jour avec succès.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
+        setIsEditing(null);
+      } else {
+        const response = await api.post('/tests', payload);
+        Swal.fire({
+          icon: 'success',
+          title: 'Test créé',
+          text: 'Le test a été créé avec succès.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
+      }
+      setIsAdding(false);
+      setFormData({
+        title: '',
+        duration: '',
+        description: '',
+        target_audience: 'etudiant_maroc',
+        is_general: false,
+        is_student: null,
+        questions: [],
+      });
+      fetchTests();
+    } catch (error) {
+      console.error('Error saving test:', error);
+      let errorMessage = 'Erreur lors de la sauvegarde du test.';
+      if (error.response?.status === 422) {
+        const errors = error.response.data.errors || [];
+        errorMessage = Array.isArray(errors) ? errors.join('\n') : error.response.data.message || 'Validation échouée';
+        console.log('Validation errors:', errors);
+      } else if (error.response?.status === 500) {
+        errorMessage = error.response.data.message || 'Erreur serveur lors de la mise à jour du test.';
+        console.log('Server error details:', error.response.data);
+      } else if (error.response?.status === 403) {
+        errorMessage = 'Accès administrateur requis.';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Session expirée, veuillez vous reconnecter.';
+        onLogout();
+        navigate('/signin');
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+      Swal.fire({
+        icon: 'error',
+        title: 'Erreur',
+        text: errorMessage,
+        toast: true,
+        position: 'top',
+        timer: 5000,
+        showConfirmButton: false,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditTest = async (testId) => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/tests/${testId}`);
+      const test = response.data.data.test;
+      const isGeneral = !!test.is_general;
+      const targetAudience = test.target_audience || 'etudiant_maroc';
+      setFormData({
+        title: test.title || '',
+        duration: test.duration || '',
+        description: test.description || '',
+        target_audience: targetAudience,
+        is_general: isGeneral,
+        is_student: isGeneral ? (test.is_student ?? false) : null,
+        questions: Array.isArray(test.questions)
+          ? test.questions.map((q) => ({
+              id: q.id,
+              question: q.question || '',
+              options: Array.isArray(q.options) ? q.options.concat(['', '']).slice(0, 4) : ['', '', '', ''],
+              correct_answer_index: Number(q.correct_answer_index) || 0,
+            }))
+          : [{ question: '', options: ['', '', '', ''], correct_answer_index: 0 }],
+      });
+      console.log('Form data after edit fetch:', {
+        target_audience: targetAudience,
+        is_general: isGeneral,
+      });
+      setIsEditing(testId);
+      setIsAdding(true);
+    } catch (error) {
+      console.error('Error fetching test for edit:', error);
+      Swal.fire({
+        icon: 'error',
+        title: 'Erreur',
+        text: 'Erreur lors du chargement du test pour modification.',
+        toast: true,
+        position: 'top',
+        timer: 3000,
+        showConfirmButton: false,
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleDeleteTest = async (testId) => {
-    if (window.confirm('Voulez-vous vraiment supprimer ce test et toutes ses questions ?')) {
+    const result = await Swal.fire({
+      title: 'Confirmer la suppression',
+      text: 'Voulez-vous vraiment supprimer ce test ?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Supprimer',
+      cancelButtonText: 'Annuler',
+    });
+
+    if (result.isConfirmed) {
       try {
         setLoading(true);
         await api.delete(`/tests/${testId}`);
-        alert('Test supprimé avec succès !');
-        fetchTests();
-        setQuestions([]);
-        setShowQuestions(false);
+        setTests(tests.filter((test) => test.id !== testId));
+        Swal.fire({
+          icon: 'success',
+          title: 'Test supprimé',
+          text: 'Le test a été supprimé avec succès.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
       } catch (error) {
-        console.error('Erreur lors de la suppression du test :', error);
-        alert('Erreur lors de la suppression du test.');
+        console.error('Error deleting test:', error);
+        Swal.fire({
+          icon: 'error',
+          title: 'Erreur',
+          text: 'Une erreur est survenue lors de la suppression.',
+          toast: true,
+          position: 'top',
+          timer: 3000,
+          showConfirmButton: false,
+        });
       } finally {
         setLoading(false);
       }
     }
   };
 
-  const toggleAddForm = () => {
-    setShowAddForm(true);
-    setShowQuestions(false); // Hide questions when showing add form
-    setEditQuestion(null); // Hide edit form
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black flex items-center justify-center">
-        <div className="text-yellow-400 animate-pulse text-lg font-bold tracking-wide">
-          Chargement...
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black">
+        <div className="text-elite-red-500 dark:text-elite-red-400 animate-pulse text-xl font-semibold">Chargement...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black">
+        <div className="text-elite-red-500 dark:text-elite-red-400 text-xl font-semibold">Veuillez vous connecter pour accéder aux tests</div>
+      </div>
+    );
+  }
+
+  if (isAdding || isEditing) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black py-12 px-4 sm:px-6 lg:px-8 relative">
+        <div className="max-w-4xl mx-auto bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8">
+          <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400 mb-6">
+            {isEditing ? 'Modifier le Test' : 'Ajouter un Nouveau Test'}
+          </h1>
+          <form onSubmit={handleSubmitForm} className="space-y-6">
+            <div>
+              <label className="block text-elite-black-700 dark:text-elite-black-300">Titre</label>
+              <input
+                type="text"
+                name="title"
+                value={formData.title || ''}
+                onChange={handleFormChange}
+                className="w-full p-3 border rounded-md dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+              />
+            </div>
+            <div>
+              <label className="block text-elite-black-700 dark:text-elite-black-300">Durée</label>
+              <input
+                type="text"
+                name="duration"
+                value={formData.duration || ''}
+                onChange={handleFormChange}
+                className="w-full p-3 border rounded-md dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+              />
+            </div>
+            <div>
+              <label className="block text-elite-black-700 dark:text-elite-black-300">Description</label>
+              <textarea
+                name="description"
+                value={formData.description || ''}
+                onChange={handleFormChange}
+                className="w-full p-3 border rounded-md dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+              />
+            </div>
+            <div>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  name="is_general"
+                  checked={formData.is_general}
+                  onChange={handleFormChange}
+                  className="mr-2"
+                />
+                <span className="text-elite-black-700 dark:text-elite-black-300">Test Général</span>
+              </label>
+            </div>
+            {formData.is_general ? (
+              <div>
+                <label className="block text-elite-black-700 dark:text-elite-black-300">Pour les étudiants ?</label>
+                <select
+                  name="is_student"
+                  value={formData.is_student === null ? '' : formData.is_student.toString()}
+                  onChange={handleFormChange}
+                  className="w-full p-3 border rounded-md dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+                  required
+                >
+                  <option value="" disabled>Sélectionner</option>
+                  <option value="true">Oui</option>
+                  <option value="false">Non</option>
+                </select>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-elite-black-700 dark:text-elite-black-300">Audience cible</label>
+                <select
+                  name="target_audience"
+                  value={formData.target_audience}
+                  onChange={handleFormChange}
+                  className="w-full p-3 border rounded-md dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+                  required
+                >
+                  {audienceOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div>
+              <h3 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4">Questions</h3>
+              {formData.questions.map((q, index) => (
+                <div key={index} className="border p-4 rounded-md mb-4 dark:border-elite-black-600">
+                  <div>
+                    <label className="block text-elite-black-700 dark:text-elite-black-300">Question {index + 1}</label>
+                    <input
+                      type="text"
+                      name="question"
+                      value={q.question}
+                      onChange={(e) => handleFormChange(e, index)}
+                      className="w-full p-3 border rounded-md dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+                      required
+                    />
+                  </div>
+                  <div className="mt-4">
+                    <label className="block text-elite-black-700 dark:text-elite-black-300">Options</label>
+                    {q.options.map((option, optIndex) => (
+                      <input
+                        key={optIndex}
+                        type="text"
+                        value={option}
+                        onChange={(e) => handleFormChange(e, index, optIndex)}
+                        className="w-full p-3 border rounded-md mb-2 dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+                        placeholder={`Option ${optIndex + 1}`}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-4">
+                    <label className="block text-elite-black-700 dark:text-elite-black-300">Index de la réponse correcte</label>
+                    <input
+                      type="number"
+                      name="correct_answer_index"
+                      value={q.correct_answer_index}
+                      onChange={(e) => handleFormChange(e, index)}
+                      className="w-full p-3 border rounded-md dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-yellow-100"
+                      min="0"
+                      max={q.options.filter((opt) => opt.trim() !== '').length - 1}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeQuestion(index)}
+                    className="mt-2 text-elite-red-500 hover:text-elite-red-600"
+                  >
+                    Supprimer la question
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addQuestion}
+                className="flex items-center text-elite-yellow-600 dark:text-elite-yellow-400 hover:text-elite-yellow-700"
+              >
+                <PlusCircle className="h-5 w-5 mr-2" /> Ajouter une question
+              </button>
+            </div>
+            <div className="flex justify-end gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdding(false);
+                  setIsEditing(null);
+                  setFormData({
+                    title: '',
+                    duration: '',
+                    description: '',
+                    target_audience: 'etudiant_maroc',
+                    is_general: false,
+                    is_student: null,
+                    questions: [],
+                  });
+                }}
+                className="bg-elite-black-500 text-white px-6 py-3 rounded-lg hover:bg-elite-black-600"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Enregistrement...' : isEditing ? 'Modifier' : 'Créer'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     );
   }
 
-  if (showResults) {
-    if (!feedback) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black flex items-center justify-center">
-          <div className="text-yellow-400 animate-pulse text-lg font-bold tracking-wide">
-            Chargement du feedback...
-          </div>
-        </div>
-      );
-    }
+  if (showResults && feedback) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto bg-gray-800/90 rounded-xl shadow-2xl p-8 transform transition-all duration-500 hover:scale-105">
-          <button 
-            onClick={backToTests} 
-            className="flex items-center text-yellow-400 mb-6 hover:text-yellow-300 transition-colors font-semibold"
-          >
-            <ArrowRight className="h-5 w-5 mr-2 rotate-180" />
-            Retour aux tests
-          </button>
-          <h1 className="text-3xl font-bold text-red-500 mb-4 tracking-tight">Résultats d'évaluation</h1>
-          <p className="text-gray-300 mb-8">Analyse détaillée de vos performances</p>
-
+      <div className="min-h-screen bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black py-12 px-4 sm:px-6 lg:px-8 relative">
+        
+        <div className="max-w-4xl mx-auto bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8">
+          <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400 mb-8">Résultats de Votre Test</h1>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div className="bg-gray-700/80 p-6 rounded-xl shadow-lg border border-gray-600">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4 flex items-center">
-                <Check className="h-6 w-6 mr-2 text-green-400" />
-                Points forts
+            <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl">
+              <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
+                <Check className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
+                Vos Points Forts
               </h2>
               <ul className="space-y-3">
                 {feedback.points_forts?.map((strength, index) => (
-                  <li key={index} className="flex items-start">
-                    <span className="h-6 w-6 rounded-full bg-green-900/50 text-green-400 flex items-center justify-center mr-3">
-                      <Check className="h-4 w-4" />
-                    </span>
-                    <span className="text-gray-200">{strength}</span>
+                  <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
+                    <Check className="h-5 w-5 mr-2 text-elite-yellow-500" />
+                    {strength}
                   </li>
-                )) || <li className="text-gray-200">Aucun point fort disponible</li>}
+                ))}
               </ul>
             </div>
-
-            <div className="bg-gray-700/80 p-6 rounded-xl shadow-lg border border-gray-600">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4 flex items-center">
-                <AlertCircle className="h-6 w-6 mr-2 text-amber-400" />
-                Points à améliorer
+            <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl">
+              <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
+                <ArrowRight className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
+                Axes d’Amélioration
               </h2>
               <ul className="space-y-3">
-                {feedback?.domaines_d_amélioration?.map((weakness, index) => (
-                  <li key={index} className="flex items-start">
-                    <span className="h-6 w-6 rounded-full bg-amber-900/50 text-amber-400 flex items-center justify-center mr-3">
-                      <X className="h-4 w-4" />
-                    </span>
-                    <span className="text-gray-200">{weakness}</span>
+                {feedback.domaines_d_amélioration?.map((weakness, index) => (
+                  <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
+                    <ArrowRight className="h-5 w-5 mr-2 text-elite-yellow-500" />
+                    {weakness}
                   </li>
                 ))}
               </ul>
             </div>
           </div>
-
-          <div className="bg-gray-700/80 p-6 rounded-xl shadow-lg border border-gray-600 mb-8">
-            <h2 className="text-xl font-semibold text-yellow-400 mb-4 flex items-center">
-              <Brain className="h-6 w-6 mr-2 text-red-500" />
-              Recommandations
+          <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl">
+            <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
+              <Check className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
+              Nos Conseils Pour Vous
             </h2>
+            <p className="text-elite-black-600 dark:text-elite-black-300 mb-4">
+              Voici quelques suggestions personnalisées pour vous guider dans vos prochaines étapes :
+            </p>
             <ul className="space-y-3">
-              {feedback?.recommandations?.map((recommendation, index) => (
-                <li key={index} className="flex items-center">
-                  <span className="h-6 w-6 rounded-full bg-red-900/50 text-red-500 flex items-center justify-center mr-3">
+              {feedback.recommandations?.map((rec, index) => (
+                <li key={index} className="flex items-center text-elite-black-700 dark:text-elite-black-300">
+                  <span className="h-6 w-6 rounded-full bg-elite-red-100 dark:bg-elite-red-500/20 text-elite-red-500 dark:text-elite-red-400 flex items-center justify-center mr-3">
                     {index + 1}
                   </span>
-                  <span className="text-gray-200">{recommendation}</span>
+                  {rec}
                 </li>
               ))}
             </ul>
           </div>
-
-          <div className="text-center">
-            <button 
-              onClick={backToTests} 
-              className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition-colors font-semibold shadow-md"
+          <div className="text-center mt-8">
+            <button
+              onClick={backToTests}
+              className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors"
             >
-              Retour à la liste des tests
+              Retour aux Tests
             </button>
-          </div>
-          
-          <div className="mt-12 text-center">
-            <Link 
-              to="/dashboard" 
-              className="inline-flex items-center text-yellow-400 hover:text-yellow-300 font-semibold transition-colors"
-            >
-              Votre tableau de bord
-              <ArrowRight className="h-5 w-5 ml-2" />
-            </Link>
           </div>
         </div>
       </div>
     );
   }
 
-  if (activeTest) {
-    if (questions.length === 0) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black flex items-center justify-center">
-          <div className="text-gray-200 text-lg font-medium tracking-wide">
-            Aucune question disponible pour ce test.
-          </div>
-        </div>
-      );
-    }
-
+  if (activeTest && questions.length > 0) {
     const question = questions[currentQuestion];
-    const progress = ((currentQuestion + 1) / questions.length) * 100;
+    const totalQuestions = questions.length;
+    const progress = ((currentQuestion + 1) / totalQuestions) * 100;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-3xl mx-auto bg-gray-800/90 rounded-xl shadow-2xl p-8 transform transition-all duration-500 hover:scale-105">
-          <button 
-            onClick={backToTests} 
-            className="flex items-center text-yellow-400 mb-6 hover:text-yellow-300 transition-colors font-semibold"
-          >
-            <ArrowRight className="h-5 w-5 mr-2 rotate-180" />
-            Quitter le test
-          </button>
-          <h1 className="text-3xl font-bold text-red-400 mb-4 tracking-tight">
-            {tests.find(t => t.id === activeTest)?.title}
+      <div className="min-h-screen bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black py-12 px-4 sm:px-6 lg:px-8 relative">
+        
+        <div className="max-w-3xl mx-auto bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8">
+          <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400 mb-6">
+            Test : {tests.find((t) => t.id === activeTest)?.title || 'Test'}
           </h1>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-sm text-gray-300">
-              Question {currentQuestion + 1} sur {questions.length}
+            <span className="text-sm text-elite-black-600 dark:text-elite-black-300">
+              Question {currentQuestion + 1} sur {totalQuestions}
             </span>
-            <span className="text-sm font-semibold text-yellow-400">
+            <span className="text-sm font-semibold text-elite-yellow-600 dark:text-elite-yellow-400">
               {Math.round(progress)}% complété
             </span>
           </div>
-          <div className="w-full h-3 bg-gray-600 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-yellow-500 rounded-full transition-all duration-300" 
+          <div className="w-full h-3 bg-elite-black-200 dark:bg-elite-black-600 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-elite-red-500 rounded-full transition-all duration-300"
               style={{ width: `${progress}%` }}
             />
           </div>
-          <div className="bg-gray-700/80 p-6 rounded-xl shadow-lg mt-6 border border-gray-600">
-            <h2 className="text-xl font-medium text-yellow-400 mb-6 tracking-wide">
+          <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl mt-6">
+            <h2 className="text-xl font-medium text-elite-yellow-600 dark:text-elite-yellow-400 mb-6">
               {question?.question || 'Question non disponible'}
             </h2>
             <div className="space-y-4">
@@ -372,33 +793,33 @@ const Tests = () => {
                   onClick={() => handleAnswer(question.id, index)}
                   className={`p-4 border rounded-lg cursor-pointer transition-all duration-200 ${
                     answers[question.id] === index
-                      ? 'border-red-400 bg-red-400/20'
-                      : 'border-gray-600 hover:border-yellow-500'
+                      ? 'border-elite-red-500 bg-elite-red-100 dark:bg-elite-red-500/20'
+                      : 'border-elite-black-300 dark:border-elite-black-600 hover:border-elite-red-500'
                   }`}
                 >
                   <div className="flex items-center">
                     <div
                       className={`h-6 w-6 rounded-full border mr-3 flex items-center justify-center ${
                         answers[question.id] === index
-                          ? 'border-red-500 bg-red-400 text-white'
-                          : 'border-gray-500 hover:border-yellow-500'
+                          ? 'border-elite-red-500 bg-elite-red-500 text-white'
+                          : 'border-elite-black-400 dark:border-elite-black-500 hover:border-elite-red-500'
                       }`}
                     >
                       {answers[question.id] === index && <Check className="h-4 w-4" />}
                     </div>
-                    <span className="text-gray-200">{option}</span>
+                    <span className="text-elite-black-700 dark:text-elite-black-300">{option}</span>
                   </div>
                 </div>
-              )) || <p className="text-gray-200">Aucune option disponible</p>}
+              ))}
             </div>
           </div>
           <div className="flex justify-end mt-6">
             <button
               onClick={nextQuestion}
               disabled={answers[question?.id] === undefined}
-              className="bg-red-400 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center font-semibold shadow-md"
+              className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
             >
-              {currentQuestion < questions.length -1 ? 'Suivant' : 'Résultats'}
+              {currentQuestion < questions.length - 1 ? 'Suivant' : 'Terminer'}
               <ArrowRight className="h-5 w-5 ml-2" />
             </button>
           </div>
@@ -408,365 +829,108 @@ const Tests = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-extrabold text-red-500 mb-4 tracking-tight drop-shadow-md">
-            Tests d'évaluation
-          </h1>
-          <p className="text-lg text-gray-300 tracking-wide">
-            Évaluez vos compétences avec style et précision
-          </p>
-        </div>
-        
-        {isAdmin && (
-          <div className="text-center mb-8">
-            <button
-              onClick={toggleAddForm}
-              className="bg-red-400 text-white px-6 py-3 rounded-full hover:bg-red-600 transition-all duration-300 font-semibold flex items-center mx-auto shadow-lg transform hover:scale-105"
-            >
-              <PlusCircle className="h-5 w-5 mr-2" />
-              Ajouter
-            </button>
-          </div>
-        )}
-
-        {tests.length === 0 ? (
-          <p className="text-gray-200 text-center text-lg tracking-wide">
-            Aucun test disponible actuellement.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {tests.map((test) => (
-              <div 
-                key={test.id} 
-                className="bg-gray-800/90 rounded-xl shadow-2xl p-6 transition-all duration-500 hover:shadow-xl hover:scale-105 border border-gray-700"
+    <div className="min-h-screen bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black">
+      <Sidebar isOpen={isSidebarOpen} setIsOpen={setSidebarOpen} />
+        <Navbar
+          isSidebarOpen={isSidebarOpen}
+          setSidebarOpen={setSidebarOpen}
+          user={user}
+          onLogout={onLogout}
+        />
+      <div className="pt-20 pb-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400">Tests Disponibles</h1>
+            {user.role === 'admin' && (
+              <button
+                onClick={() => setIsAdding(true)}
+                className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors flex items-center"
               >
-                <h2 className="text-xl font-semibold text-yellow-400 mb-3 tracking-tight">
-                  {test.title}
-                </h2>
-                <div className="flex items-center text-sm text-gray-400 mb-4">
-                  <span className="mr-4">{test.duration}</span>
-                  <span>{test.questions_count} questions</span>
-                </div>
-                <p className="text-sm text-gray-300 mb-6 tracking-wide">
-                  {test.description}
-                </p>
-                <button
-                  onClick={() => startTest(test.id)}
-                  className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 shadow-md transform hover:scale-105 ${
-                    test.completed
-                      ? 'bg-gray-600 text-yellow-400 hover:bg-gray-500'
-                      : 'bg-red-400 text-white hover:bg-red-400'
-                  }`}
-                >
-                  {test.completed ? 'Refaire' : 'Commencer'}
-                </button>
-                {test.completed && (
-                  <div className="mt-4 flex items-center text-sm text-green-400 font-semibold">
-                    <Check className="h-5 w-5 mr-2" />
-                    Complété
-                  </div>
-                )}
-                {isAdmin && (
-                  <div className="mt-4 flex gap-2">
-                    <button
-                      onClick={() => fetchQuestions(test.id)}
-                      className="flex-1 py-2 px-4 rounded-full bg-yellow-600 text-white hover:bg-yellow-700 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                    >
-                      Voir les questions
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTest(test.id)}
-                      className="flex-1 py-2 px-4 rounded-full bg-yellow-600 text-white hover:bg-yellow-700 transition-all duration-300 font-semibold flex items-center justify-center shadow-md transform hover:scale-105"
-                    >
-                      <Trash2 className="h-5 w-5 mr-2" />
-                      Supprimer
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {isAdmin && showQuestions && questions.length > 0 && (
-          <div className="mt-12 bg-gray-800/90 p-6 rounded-xl shadow-2xl border border-gray-700 animate-fadeIn">
-            <h2 className="text-2xl font-semibold text-yellow-400 mb-6 tracking-tight">
-              Questions du test sélectionné
-            </h2>
-            <ul className="space-y-4">
-              {questions.map((q) => (
-                <li key={q.id} className="p-4 border border-gray-600 rounded-lg flex justify-between items-center bg-gray-700/50">
-                  <div>
-                    <p className="text-yellow-400 font-medium">{q.question}</p>
-                    <p className="text-sm text-gray-300">
-                      Réponse correcte: <span className="text-green-400">{q.options[q.correct_answer_index]}</span>
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setEditQuestion({ ...q, options: [...q.options] })}
-                      className="p-2 text-blue-400 hover:text-blue-300 transition-colors"
-                    >
-                      <Edit className="h-5 w-5" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteQuestion(q.id, q.test_id)}
-                      className="p-2 text-red-400 hover:text-red-300 transition-colors"
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {isAdmin && showAddForm && !editQuestion && (
-          <div className="mt-12 bg-gray-800/90 p-6 rounded-xl shadow-2xl border border-gray-700 animate-fadeIn">
-            <h2 className="text-2xl font-semibold text-yellow-400 mb-6 tracking-tight">
-              Ajouter {addMode === 'test' ? 'un test' : 'une question'}
-            </h2>
-            {!addMode ? (
-              <div className="flex gap-4 justify-center">
-                <button
-                  onClick={() => setAddMode('question')}
-                  className="bg-red-600 text-white px-6 py-3 rounded-full hover:bg-red-700 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                >
-                  Ajouter une question
-                </button>
-                <button
-                  onClick={() => setAddMode('test')}
-                  className="bg-red-600 text-white px-6 py-3 rounded-full hover:bg-red-700 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                >
-                  Ajouter un test
-                </button>
-              </div>
-            ) : addMode === 'question' ? (
-              <form onSubmit={handleAddQuestion} className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                    Test
-                  </label>
-                  <select
-                    value={newQuestion.test_id}
-                    onChange={(e) => setNewQuestion({ ...newQuestion, test_id: e.target.value })}
-                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                    required
-                  >
-                    <option value="">Sélectionnez un test</option>
-                    {tests.map((test) => (
-                      <option key={test.id} value={test.id}>
-                        {test.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                    Question
-                  </label>
-                  <input
-                    type="text"
-                    value={newQuestion.question}
-                    onChange={(e) => setNewQuestion({ ...newQuestion, question: e.target.value })}
-                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                    required
-                  />
-                </div>
-                {newQuestion.options.map((option, index) => (
-                  <div key={index}>
-                    <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                      Option {index + 1}
-                    </label>
-                    <input
-                      type="text"
-                      value={option}
-                      onChange={(e) => {
-                        const updatedOptions = [...newQuestion.options];
-                        updatedOptions[index] = e.target.value;
-                        setNewQuestion({ ...newQuestion, options: updatedOptions });
-                      }}
-                      className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                      required
-                    />
-                  </div>
-                ))}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                    Réponse correcte (0-3)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="3"
-                    value={newQuestion.correct_answer_index}
-                    onChange={(e) => setNewQuestion({ ...newQuestion, correct_answer_index: parseInt(e.target.value) })}
-                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                    required
-                  />
-                </div>
-                <div className="flex gap-4">
-                  <button 
-                    type="submit" 
-                    className="bg-red-600 text-white px-6 py-3 rounded-full hover:bg-red-700 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                  >
-                    Ajouter
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => { setShowAddForm(false); setAddMode(null); }}
-                    className="bg-gray-600 text-white px-6 py-3 rounded-full hover:bg-gray-500 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                  >
-                    Annuler
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleAddTest} className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                    Titre
-                  </label>
-                  <input
-                    type="text"
-                    value={newTest.title}
-                    onChange={(e) => setNewTest({ ...newTest, title: e.target.value })}
-                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                    Durée
-                  </label>
-                  <input
-                    type="text"
-                    value={newTest.duration}
-                    onChange={(e) => setNewTest({ ...newTest, duration: e.target.value })}
-                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                    Description
-                  </label>
-                  <textarea
-                    value={newTest.description}
-                    onChange={(e) => setNewTest({ ...newTest, description: e.target.value })}
-                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                    required
-                  />
-                </div>
-                <div className="flex gap-4">
-                  <button 
-                    type="submit" 
-                    className="bg-red-600 text-white px-6 py-3 rounded-full hover:bg-red-700 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                  >
-                    Ajouter
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => { setShowAddForm(false); setAddMode(null); }}
-                    className="bg-gray-600 text-white px-6 py-3 rounded-full hover:bg-gray-500 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                  >
-                    Annuler
-                  </button>
-                </div>
-              </form>
+                <PlusCircle className="h-5 w-5 mr-2" />
+                Ajouter un Test
+              </button>
             )}
           </div>
-        )}
-
-        {isAdmin && editQuestion && (
-          <div className="mt-12 bg-gray-800/90 p-6 rounded-xl shadow-2xl border border-gray-700 animate-fadeIn">
-            <h2 className="text-2xl font-semibold text-yellow-400 mb-6 tracking-tight">
-              Modifier la question
-            </h2>
-            <form onSubmit={handleEditQuestion} className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                  Test
-                </label>
-                <select
-                  value={editQuestion.test_id}
-                  onChange={(e) => setEditQuestion({ ...editQuestion, test_id: e.target.value })}
-                  className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                  required
+          {tests.length === 0 ? (
+            <div className="bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8 text-center">
+              <h2 className="text-xl font-semibold text-elite-black-700 dark:text-elite-black-300">
+                Aucun test disponible
+              </h2>
+              <p className="text-elite-black-500 dark:text-elite-black-400 mt-2">
+                {user.role === 'admin'
+                  ? 'Créez un nouveau test pour commencer.'
+                  : user.is_first_time
+                  ? 'Veuillez compléter le test général pour accéder aux tests adaptés à votre profil.'
+                  : 'Aucun test ne correspond à votre profil pour le moment.'}
+              </p>
+              {user.role !== 'admin' && (
+                <div className="mt-6">
+                  <button
+                    onClick={() => navigate('/test-general')}
+                    className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors mr-4"
+                  >
+                    Aller au Test Général
+                  </button>
+                  <button
+                    onClick={() => navigate('/dashboard')}
+                    className="bg-elite-black-500 text-white px-6 py-3 rounded-lg hover:bg-elite-black-600 transition-colors"
+                  >
+                    Retour au Tableau de Bord
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {tests.map((test) => (
+                <div
+                  key={test.id}
+                  className="bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-6 hover:shadow-2xl transition-shadow"
                 >
-                  <option value="">Sélectionnez un test</option>
-                  {tests.map((test) => (
-                    <option key={test.id} value={test.id}>
-                      {test.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                  Question
-                </label>
-                <input
-                  type="text"
-                  value={editQuestion.question}
-                  onChange={(e) => setEditQuestion({ ...editQuestion, question: e.target.value })}
-                  className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                  required
-                />
-              </div>
-              {editQuestion.options.map((option, index) => (
-                <div key={index}>
-                  <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                    Option {index + 1}
-                  </label>
-                  <input
-                    type="text"
-                    value={option}
-                    onChange={(e) => {
-                      const updatedOptions = [...editQuestion.options];
-                      updatedOptions[index] = e.target.value;
-                      setEditQuestion({ ...editQuestion, options: updatedOptions });
-                    }}
-                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition-all duration-300"
-                    required
-                  />
+                  <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-2">
+                    {test.title}
+                  </h2>
+                  <p className="text-elite-black-600 dark:text-elite-black-300 mb-4">{test.description}</p>
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-elite-black-500 dark:text-elite-black-400">
+                      <p>Durée : {test.duration}</p>
+                      <p>Questions : {test.questions_count || 0}</p>
+                      {test.is_general ? (
+                        <p>Pour : {test.is_student ? 'Étudiants' : 'Non-étudiants'}</p>
+                      ) : (
+                        <p>Audience : {audienceOptions.find((opt) => opt.value === test.target_audience)?.label || 'Non spécifié'}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => startTest(test.id)}
+                        className="bg-elite-red-500 text-white px-4 py-2 rounded-lg hover:bg-elite-red-600 transition-colors"
+                      >
+                        Commencer
+                      </button>
+                      {user.role === 'admin' && (
+                        <>
+                          <button
+                            onClick={() => handleEditTest(test.id)}
+                            className="p-2 rounded-full bg-elite-yellow-200 dark:bg-elite-yellow-500/20 text-elite-yellow-600 dark:text-elite-yellow-400 hover:bg-elite-yellow-300 dark:hover:bg-elite-yellow-500/30 transition-colors"
+                          >
+                            <Edit className="h-5 w-5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTest(test.id)}
+                            className="p-2 rounded-full bg-elite-red-200 dark:bg-elite-red-500/20 text-elite-red-600 dark:text-elite-red-400 hover:bg-elite-red-300 dark:hover:bg-elite-red-500/30 transition-colors"
+                          >
+                            <Trash2 className="h-5 w-5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ))}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 tracking-wide">
-                  Réponse correcte (0-3)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="3"
-                  value={editQuestion.correct_answer_index}
-                  onChange={(e) => setEditQuestion({ ...editQuestion, correct_answer_index: parseInt(e.target.value) })}
-                  className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all duration-300"
-                  required
-                />
-              </div>
-              <div className="flex gap-4">
-                <button 
-                  type="submit" 
-                  className="bg-yellow-500 text-white px-6 py-3 rounded-full hover:bg-yellow-700 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                >
-                  Modifier
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setEditQuestion(null)}
-                  className="bg-gray-600 text-white px-6 py-3 rounded-full hover:bg-gray-500 transition-all duration-300 font-semibold shadow-md transform hover:scale-105"
-                >
-                  Annuler
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

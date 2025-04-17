@@ -39,7 +39,7 @@ const SignIn = ({ onLogin }) => {
     try {
       const response = await api.post('/login', { email, password });
       const { token, user, redirect } = response.data;
-      onLogin(user, token, redirect); // Pass redirect to App.jsx
+      onLogin(user, token);
       setLoginResponse({ user, token, redirect });
 
       Swal.fire({

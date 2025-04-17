@@ -41,9 +41,12 @@ export default {
 			800: '#333333',
 			900: '#1a1a1a',
 		  },
+		  'elite-green': {
+			500: '#10B981', // Vert émeraude par exemple
+			600: '#059669', // Plus foncé pour hover
+        	},
 		},
 	  },
 	},
 	plugins: [require('tailwindcss-animate')],
   };
-  

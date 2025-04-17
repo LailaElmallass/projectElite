@@ -4,37 +4,133 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\TestController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\FormationController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\CapsuleController;
+use App\Http\Controllers\InterviewController;
+use App\Http\Controllers\JobOfferController;
+use App\Http\Controllers\DiffusionWorkshopController;
+use App\Http\Controllers\DashboardController;
 
-Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+/*
+|--------------------------------------------------------------------------
+| Routes publiques
+|--------------------------------------------------------------------------
+*/
+Route::post('/register', [AuthController::class, 'register'])->name('register');
+Route::post('/login', [AuthController::class, 'login'])->name('login');
 
-Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/user', [AuthController::class, 'getUser']);
-    Route::post('/logout', [AuthController::class, 'logout']);
-    Route::post('/complete-first-test', [AuthController::class, 'completeFirstTest']);
-
-
-    // Test Routes
-    Route::get('/tests', [TestController::class, 'index']);
-    Route::get('/tests/{testId}/questions', [TestController::class, 'getQuestions']);
-    Route::middleware('auth:sanctum')->group(function () {
-        Route::post('/tests/submit', [TestController::class, 'submit']);
-    });
-    Route::post('/tests', [TestController::class, 'storeTest']);
-    Route::post('/tests/questions', [TestController::class, 'storeQuestion']);
-    Route::put('/tests/questions/{id}', [TestController::class, 'updateQuestion']);
-    Route::delete('/tests/questions/{id}', [TestController::class, 'deleteQuestion']);
-    Route::delete('/tests/{id}', [TestController::class, 'deleteTest']);
-
-    // Dashboard Routes
-    Route::get('/dashboard', fn() => response()->json(['message' => 'Dashboard']));
-    Route::get('/coach_dashboard', fn() => response()->json(['message' => 'Coach Dashboard']));
-    Route::get('/entreprise_dashboard', fn() => response()->json(['message' => 'Entreprise Dashboard']));
-    Route::get('/admin_dashboard', fn() => response()->json(['message' => 'Admin Dashboard']));
+/*
+|--------------------------------------------------------------------------
+| Routes protégées par authentification
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')->get('/test-auth', function () {
+    return response()->json(['user' => Auth::user()]);
 });
 
 Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/notifications', [NotificationController::class, 'index']);
-    Route::post('/notifications', [NotificationController::class, 'store']);
-    Route::put('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    // Authentification et utilisateur
+    Route::get('/user', [AuthController::class, 'getUser'])->name('user');
+    Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+
+    // Profil utilisateur
+    Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');
+    Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::put('/password', [ProfileController::class, 'updatePassword'])->name('profile.update-password');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+
+    // Tableaux de bord
+    Route::get('/dashboard', [DashboardController::class, 'userDashboard'])->name('user-dashboard');
+    // Placeholder routes for other dashboards (to be implemented similarly)
+    Route::get('/coach_dashboard', [DashboardController::class, 'coachDashboard'])->name('coach-dashboard');
+    Route::get('/entreprise_dashboard', [DashboardController::class, 'entrepriseDashboard'])->name('entreprise-dashboard');
+    Route::get('/admin_dashboard', [DashboardController::class, 'adminDashboard'])->name('admin-dashboard');
+
+    // Gestion des utilisateurs
+    Route::get('/users', [UserController::class, 'index'])->name('users.index');
+    Route::post('/users', [UserController::class, 'store'])->name('users.store');
+    Route::put('/users/student-status', [TestController::class, 'setStudentStatus'])->name('users.student-status');
+    Route::put('/users/{id}', [UserController::class, 'update'])->name('users.update')->where('id', '[0-9]+');
+    Route::delete('/users/{id}', [UserController::class, 'destroy'])->name('users.destroy');
+
+    // Recherche
+    Route::get('/search', [UserController::class, 'search'])->name('search');
+
+    // Tests
+    Route::get('/tests/general', [TestController::class, 'getGeneralTest'])->name('tests.general');
+    Route::post('/tests/general/submit', [TestController::class, 'submitGeneralTest'])->name('tests.general.submit');
+    Route::get('/tests', [TestController::class, 'index'])->name('tests.index');
+    Route::post('/tests/submit', [TestController::class, 'submit'])->name('tests.submit');
+    Route::get('/tests/{testId}/questions', [TestController::class, 'getQuestions'])->name('tests.questions');
+    Route::get('/tests/{id}', [TestController::class, 'show'])->name('tests.show');
+
+    // Routes admin pour les tests
+    Route::middleware('role:admin')->group(function () {
+        Route::post('/tests', [TestController::class, 'storeTest'])->name('tests.store');
+        Route::put('/tests/{id}', [TestController::class, 'updateTest'])->name('tests.update');
+        Route::delete('/tests/{id}', [TestController::class, 'deleteTest'])->name('tests.destroy');
+        Route::post('/questions', [TestController::class, 'storeQuestion'])->name('questions.store');
+        Route::put('/questions/{id}', [TestController::class, 'updateQuestion'])->name('questions.update');
+        Route::delete('/questions/{id}', [TestController::class, 'deleteQuestion'])->name('questions.destroy');
+    });
+
+    // Notifications
+    Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
+    Route::post('/notifications', [NotificationController::class, 'store'])->name('notifications.store');
+    Route::put('/notifications/{id}/read', [NotificationController::class, 'markAsRead'])->name('notifications.read');
+    Route::get('/enterprise-notifications', [NotificationController::class, 'enterpriseNotifications'])->name('notifications.enterprise');
+
+    // Formations
+    Route::get('/formations', [FormationController::class, 'getFormations'])->name('formations.index');
+    Route::post('/formations/payment', [FormationController::class, 'initiatePayment'])->name('formations.payment');
+    Route::get('/formations/{formationId}/access', [FormationController::class, 'checkAccess'])->name('formations.access');
+    Route::post('/formations/{formationId}/complete', [FormationController::class, 'completeFormation'])->name('formations.complete');
+
+    // Routes admin pour les formations
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/admin/formations', [FormationController::class, 'index'])->name('admin.formations.index');
+        Route::post('/admin/formations', [FormationController::class, 'store'])->name('admin.formations.store');
+        Route::put('/admin/formations/{id}', [FormationController::class, 'update'])->name('admin.formations.update');
+        Route::delete('/admin/formations/{id}', [FormationController::class, 'destroy'])->name('admin.formations.destroy');
+    });
+
+    // Capsules
+    Route::get('/capsules', [CapsuleController::class, 'index'])->name('capsules.index');
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/capsules/admin', [CapsuleController::class, 'adminIndex'])->name('capsules.admin');
+        Route::post('/capsules', [CapsuleController::class, 'store'])->name('capsules.store');
+        Route::put('/capsules/{id}', [CapsuleController::class, 'update'])->name('capsules.update');
+        Route::delete('/capsules/{id}', [CapsuleController::class, 'destroy'])->name('capsules.destroy');
+    });
+
+    // Interviews
+    Route::post('/interviews', [InterviewController::class, 'store'])->name('interviews.store');
+    Route::get('/interviews', [InterviewController::class, 'indexForUser'])->name('interviews.index');
+    Route::post('/interviews/{id}/apply', [InterviewController::class, 'apply'])->name('interviews.apply');
+    Route::get('/user/interviews/applied', [InterviewController::class, 'appliedInterviews'])->name('interviews.applied');
+    Route::get('/interviews/{id}/candidates', [InterviewController::class, 'getCandidates'])->name('interviews.candidates');
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/all-interviews', [InterviewController::class, 'allInterviews'])->name('interviews.admin');
+        Route::put('/interviews/{id}/confirm', [InterviewController::class, 'confirm'])->name('interviews.confirm');
+    });
+
+    // Job Offers
+    Route::get('/job-offers', [JobOfferController::class, 'index'])->name('job-offers.index');
+    Route::post('/job-offers/{jobOffer}/apply', [JobOfferController::class, 'apply'])->name('job-offers.apply');
+    Route::middleware('role:admin,entreprise')->group(function () {
+        Route::post('/job-offers', [JobOfferController::class, 'store'])->name('job-offers.store');
+        Route::put('/job-offers/{id}', [JobOfferController::class, 'update'])->name('job-offers.update');
+        Route::delete('/job-offers/{id}', [JobOfferController::class, 'destroy'])->name('job-offers.destroy');
+        Route::get('/job-offers/{id}/applications', [JobOfferController::class, 'applications'])->name('job-offers.applications');
+    });
+
+    // Diffusions_workshops
+    Route::get('/diffusions-workshops', [DiffusionWorkshopController::class, 'index'])->name('diffusions-workshops.index');
+    Route::middleware('role:admin,entreprise')->group(function () {
+        Route::post('/diffusions-workshops', [DiffusionWorkshopController::class, 'store'])->name('diffusions-workshops.store');
+        Route::put('/diffusions-workshops/{id}', [DiffusionWorkshopController::class, 'update'])->name('diffusions-workshops.update');
+        Route::delete('/diffusions-workshops/{id}', [DiffusionWorkshopController::class, 'destroy'])->name('diffusions-workshops.destroy');
+    });
 });
