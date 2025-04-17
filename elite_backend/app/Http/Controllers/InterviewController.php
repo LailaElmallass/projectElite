@@ -204,4 +204,30 @@ class InterviewController extends Controller
             return response()->json(['message' => 'Entretien non trouvé'], 404);
         }
     }
+
+    /**
+     * Supprime un entretien (admin uniquement).
+     */
+    public function destroy($id)
+    {
+        $user = Auth::user();
+        Log::info("Delete attempt: user_id={$user->id}, role={$user->role}, interview_id={$id}");
+
+        if ($user->role !== 'admin') {
+            Log::warning("Delete attempt by non-admin: user_id={$user->id}, role={$user->role}");
+            return response()->json(['message' => 'Non autorisé'], 403);
+        }
+
+        try {
+            $interview = Interview::findOrFail($id);
+            $interviewTitle = $interview->title; // Pour la journalisation
+            $interview->delete();
+            Log::info("Interview deleted: id={$id}, title={$interviewTitle}");
+
+            return response()->json(['message' => 'Entretien supprimé avec succès'], 200);
+        } catch (\Exception $e) {
+            Log::error("Delete failed: interview_id={$id}, error={$e->getMessage()}");
+            return response()->json(['message' => 'Entretien non trouvé'], 404);
+        }
+    }
 }

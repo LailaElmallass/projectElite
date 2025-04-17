@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Dialog, Transition } from '@headlessui/react';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import api from '@/lib/api';
 import { cn } from '../lib/utils';
 import { useDarkMode } from '../DarkModeContext';
-import { Briefcase, PlusCircle, Edit, Trash2 } from 'lucide-react';
+import { Briefcase, PlusCircle, Edit, Trash2, Users } from 'lucide-react';
 import Swal from 'sweetalert2';
 
-const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
+const OffresEmploi = ({ user, isLoading, onLogout }) => {
   const { t } = useTranslation();
   const { darkMode } = useDarkMode();
   const [jobOffers, setJobOffers] = useState([]);
@@ -17,24 +16,32 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
+  const [isApplicationsModalOpen, setIsApplicationsModalOpen] = useState(false);
   const [currentOffer, setCurrentOffer] = useState(null);
+  const [applications, setApplications] = useState([]);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [formData, setFormData] = useState({
-    title: '',
+    titre: '',
     description: '',
-    requirements: '',
-    location: '',
-    salaryRange: '',
-    contractType: '',
-    closingDate: '',
+    exigences: '',
+    lieu: '',
+    plageDeSalaire: '',
+    typeDeContrat: '',
+    dateDeCloture: '',
   });
   const [applyData, setApplyData] = useState({
-    coverLetter: '',
+    lettreDeMotivation: '',
     cv: null,
   });
+  const [formErrors, setFormErrors] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
   const [filterContractType, setFilterContractType] = useState('');
   const [filterLocation, setFilterLocation] = useState('');
+
+  useEffect(() => {
+    console.log('Utilisateur:', user);
+    fetchJobOffers();
+  }, [searchQuery, filterContractType, filterLocation]);
 
   const fetchJobOffers = async () => {
     try {
@@ -44,40 +51,44 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
       if (!token) throw new Error(t('aucun jeton trouve'));
       const response = await api.get('/job-offers', {
         headers: { Authorization: `Bearer ${token}` },
+        params: { search: searchQuery, contract_type: filterContractType, location: filterLocation },
       });
-      const mappedOffers = Array.isArray(response.data)
-        ? response.data.map(offer => ({
-            ...offer,
-            contractType: offer.contract_type,
-            salaryRange: offer.salary_range,
-            closingDate: offer.closing_date,
-          }))
-        : [];
-      setJobOffers(mappedOffers);
+      setJobOffers(response.data || []);
     } catch (error) {
-      console.error('Erreur de récupération:', error.message, error.response?.data);
-      setError(error.response?.data?.error || t('echec du chargement des offres d emploi'));
+      console.error('Erreur de chargement:', error);
+      setError(error.response?.data?.error || t('echec chargement offres'));
       setJobOffers([]);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchJobOffers();
-  }, []);
+  const fetchApplications = async (offerId) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) throw new Error(t('aucun jeton trouve'));
+      const response = await api.get(`/job-offers/${offerId}/applications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setApplications(response.data || []);
+      setIsApplicationsModalOpen(true);
+    } catch (error) {
+      console.error('Erreur lors du chargement des candidatures:', error);
+      Swal.fire({
+        title: t('erreur'),
+        text: error.response?.data?.error || t('echec chargement candidatures'),
+        icon: 'error',
+        customClass: {
+          popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+        },
+      });
+    }
+  };
 
-  const contractTypes = [...new Set(jobOffers.map(offer => offer.contractType).filter(type => type))];
+  const contractTypes = [...new Set(jobOffers.map(offer => offer.contract_type).filter(type => type))];
   const locations = [...new Set(jobOffers.map(offer => offer.location).filter(loc => loc))];
 
-  const filteredJobOffers = jobOffers.filter(offer => {
-    const matchesSearch =
-      offer.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      offer.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesContractType = filterContractType ? offer.contractType === filterContractType : true;
-    const matchesLocation = filterLocation ? offer.location === filterLocation : true;
-    return matchesSearch && matchesContractType && matchesLocation;
-  });
+  const filteredJobOffers = jobOffers;
 
   const showDetails = (offer) => {
     Swal.fire({
@@ -87,10 +98,10 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
           <p><strong>${t('description')}:</strong> ${offer.description || t('non specifie')}</p>
           <p><strong>${t('exigences')}:</strong> ${offer.requirements || t('non specifie')}</p>
           <p><strong>${t('lieu')}:</strong> ${offer.location || t('non specifie')}</p>
-          <p><strong>${t('fourchette de salaire')}:</strong> ${offer.salaryRange || t('non specifie')}</p>
-          <p><strong>${t('type de contrat')}:</strong> ${offer.contractType || t('non specifie')}</p>
+          <p><strong>${t('plage de salaire')}:</strong> ${offer.salary_range || t('non specifie')}</p>
+          <p><strong>${t('type de contrat')}:</strong> ${offer.contract_type || t('non specifie')}</p>
           <p><strong>${t('date de cloture')}:</strong> ${
-            offer.closingDate ? new Date(offer.closingDate).toLocaleDateString('fr-FR') : t('non specifie')
+            offer.closing_date ? new Date(offer.closing_date).toLocaleDateString('fr-FR') : t('non specifie')
           }</p>
         </div>
       `,
@@ -117,43 +128,77 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
   const openModal = (offer = null) => {
     setCurrentOffer(offer);
     setFormData(
-      offer || {
-        title: '',
-        description: '',
-        requirements: '',
-        location: '',
-        salaryRange: '',
-        contractType: '',
-        closingDate: '',
-      }
+      offer
+        ? {
+            titre: offer.title,
+            description: offer.description,
+            exigences: offer.requirements,
+            lieu: offer.location,
+            plageDeSalaire: offer.salary_range || '',
+            typeDeContrat: offer.contract_type || '',
+            dateDeCloture: offer.closing_date ? offer.closing_date.split('T')[0] : '',
+          }
+        : {
+            titre: '',
+            description: '',
+            exigences: '',
+            lieu: '',
+            plageDeSalaire: '',
+            typeDeContrat: '',
+            dateDeCloture: '',
+          }
     );
+    setFormErrors({});
     setIsModalOpen(true);
   };
 
   const closeModal = () => {
     setIsModalOpen(false);
     setCurrentOffer(null);
+    setFormErrors({});
   };
 
   const openApplyModal = (offer) => {
+    console.log('Ouverture du modal de candidature pour l\'offre:', offer);
     setCurrentOffer(offer);
-    setApplyData({ coverLetter: '', cv: null });
+    setApplyData({ lettreDeMotivation: '', cv: null });
+    setFormErrors({});
     setIsApplyModalOpen(true);
   };
 
   const closeApplyModal = () => {
     setIsApplyModalOpen(false);
     setCurrentOffer(null);
+    setFormErrors({});
+  };
+
+  const closeApplicationsModal = () => {
+    setIsApplicationsModalOpen(false);
+    setApplications([]);
+    setCurrentOffer(null);
   };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData({ ...formData, [name]: value });
+    setFormErrors({ ...formErrors, [name]: '' });
   };
 
   const handleApplyInputChange = (e) => {
     const { name, value, files } = e.target;
+    if (files) {
+      const file = files[0];
+      if (file && file.size > 2 * 1024 * 1024) {
+        setFormErrors({ ...formErrors, cv: t('cv trop grand') });
+        return;
+      }
+      if (file && file.type !== 'application/pdf') {
+        setFormErrors({ ...formErrors, cv: t('cv doit etre pdf') });
+        return;
+      }
+    }
     setApplyData({ ...applyData, [name]: files ? files[0] : value });
+    setFormErrors({ ...formErrors, [name]: '' });
   };
 
   const handleSubmit = async (e) => {
@@ -161,28 +206,27 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
     try {
       const token = localStorage.getItem('token');
       if (!token) throw new Error(t('aucun jeton trouve'));
-      const payload = {
-        ...formData,
-        contract_type: formData.contractType,
-        salary_range: formData.salaryRange,
-        closing_date: formData.closingDate,
-      };
-      delete payload.contractType;
-      delete payload.salaryRange;
-      delete payload.closingDate;
 
-      if (currentOffer) {
-        await api.put(`/job-offers/${currentOffer.id}`, payload, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } else {
-        await api.post('/job-offers', payload, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      }
+      const payload = {
+        title: formData.titre,
+        description: formData.description,
+        requirements: formData.exigences,
+        location: formData.lieu,
+        salary_range: formData.plageDeSalaire,
+        contract_type: formData.typeDeContrat,
+        closing_date: formData.dateDeCloture,
+      };
+
+      const response = currentOffer
+        ? await api.put(`/job-offers/${currentOffer.id}`, payload, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+        : await api.post('/job-offers', payload, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
       fetchJobOffers();
       closeModal();
-      setError(null);
       Swal.fire({
         title: t('succes'),
         text: currentOffer ? t('offre mise a jour') : t('offre creee'),
@@ -194,26 +238,36 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
         },
       });
     } catch (error) {
-      console.error('Erreur de soumission:', error.message, error.response?.data);
-      setError(error.response?.data?.error || t('echec de la sauvegarde de l offre'));
-      Swal.fire({
-        title: t('erreur'),
-        text: error.response?.data?.error || t('echec de la sauvegarde de l offre'),
-        icon: 'error',
-        customClass: {
-          popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
-        },
-      });
+      console.error('Erreur de soumission:', error);
+      if (error.response?.status === 422) {
+        setFormErrors(error.response.data.errors);
+      } else {
+        setError(error.response?.data?.error || t('echec sauvegarde offre'));
+        Swal.fire({
+          title: t('erreur'),
+          text: error.response?.data?.error || t('echec sauvegarde offre'),
+          icon: 'error',
+          customClass: {
+            popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+          },
+        });
+      }
     }
   };
 
   const handleApplySubmit = async (e) => {
     e.preventDefault();
+    if (!applyData.cv) {
+      setFormErrors({ ...formErrors, cv: t('cv requis') });
+      return;
+    }
+
     try {
       const token = localStorage.getItem('token');
       if (!token) throw new Error(t('aucun jeton trouve'));
+
       const formDataToSend = new FormData();
-      formDataToSend.append('cover_letter', applyData.coverLetter || '');
+      formDataToSend.append('cover_letter', applyData.lettreDeMotivation || '');
       formDataToSend.append('cv', applyData.cv);
 
       await api.post(`/job-offers/${currentOffer.id}/apply`, formDataToSend, {
@@ -222,12 +276,12 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
           'Content-Type': 'multipart/form-data',
         },
       });
+
       fetchJobOffers();
       closeApplyModal();
-      setError(null);
       Swal.fire({
         title: t('succes'),
-        text: t('candidature soumise'),
+        text: t('candidature envoyee'),
         icon: 'success',
         timer: 1500,
         showConfirmButton: false,
@@ -236,11 +290,12 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
         },
       });
     } catch (error) {
-      console.error('Erreur de candidature:', error.message, error.response?.data);
-      let errorMessage = t('echec de la soumission de la candidature');
+      console.error('Erreur de candidature:', error);
+      let errorMessage = t('echec soumission candidature');
       if (error.response) {
         if (error.response.status === 422) {
-          errorMessage = error.response.data.errors?.cv?.[0] || t('fichier invalide');
+          setFormErrors(error.response.data.errors);
+          errorMessage = error.response.data.errors.cv?.[0] || t('echec soumission candidature');
         } else if (error.response.status === 400) {
           errorMessage = t('deja postule');
         } else if (error.response.status === 403) {
@@ -265,8 +320,8 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
 
   const handleDelete = async (id) => {
     const result = await Swal.fire({
-      title: t('confirmer la suppression'),
-      text: t('confirmation de la suppression de l offre'),
+      title: t('confirmer suppression'),
+      text: t('confirmer suppression offre'),
       icon: 'warning',
       showCancelButton: true,
       confirmButtonText: t('supprimer'),
@@ -290,7 +345,6 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
           headers: { Authorization: `Bearer ${token}` },
         });
         fetchJobOffers();
-        setError(null);
         Swal.fire({
           title: t('supprime'),
           text: t('offre supprimee'),
@@ -302,17 +356,53 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
           },
         });
       } catch (error) {
-        console.error('Erreur de suppression:', error.message, error.response?.data);
-        setError(error.response?.data?.error || t('echec de la suppression de l offre'));
+        console.error('Erreur de suppression:', error);
+        setError(error.response?.data?.error || t('echec suppression offre'));
         Swal.fire({
           title: t('erreur'),
-          text: error.response?.data?.error || t('echec de la suppression de l offre'),
+          text: error.response?.data?.error || t('echec suppression offre'),
           icon: 'error',
           customClass: {
             popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
           },
         });
       }
+    }
+  };
+
+  const handleUpdateStatus = async (applicationId, newStatus) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) throw new Error(t('aucun jeton trouve'));
+
+      await api.put(`/job-applications/${applicationId}`, { status: newStatus }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      setApplications(applications.map(app =>
+        app.id === applicationId ? { ...app, status: newStatus } : app
+      ));
+
+      Swal.fire({
+        title: t('succes'),
+        text: t('statut mis a jour'),
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false,
+        customClass: {
+          popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+        },
+      });
+    } catch (error) {
+      console.error('Erreur de mise à jour du statut:', error);
+      Swal.fire({
+        title: t('erreur'),
+        text: error.response?.data?.error || t('echec mise a jour statut'),
+        icon: 'error',
+        customClass: {
+          popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+        },
+      });
     }
   };
 
@@ -336,7 +426,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
   }
 
   return (
-     <div className={cn("min-h-screen", darkMode ? "dark bg-elite-black-900" : "bg-elite-yellow-50")}>
+    <div className={cn('min-h-screen', darkMode ? 'dark bg-elite-black-900' : 'bg-elite-yellow-50')}>
       <Sidebar isOpen={isSidebarOpen} setIsOpen={setSidebarOpen} />
       <div className="flex-1">
         <Navbar
@@ -354,7 +444,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                   darkMode ? 'text-yellow-400' : 'text-gray-900'
                 )}
               >
-                {t('offres d emploi')}
+                {t('offres emploi')}
               </h1>
               {(user?.role === 'admin' || user?.role === 'entreprise') && (
                 <button
@@ -365,7 +455,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                   )}
                 >
                   <PlusCircle className="h-5 w-5" />
-                  {t('ajouter une offre')}
+                  {t('ajouter offre')}
                 </button>
               )}
             </div>
@@ -378,7 +468,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                     darkMode ? 'text-yellow-400' : 'text-gray-700'
                   )}
                 >
-                  {t('rechercher')}
+                  {t('recherche')}
                 </label>
                 <input
                   type="text"
@@ -412,7 +502,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                       : 'border-gray-300 text-gray-900 focus:ring-red-600'
                   )}
                 >
-                  <option value="">{t('tous les types de contrat')}</option>
+                  <option value="">{t('tous types de contrat')}</option>
                   {contractTypes.map((type) => (
                     <option key={type} value={type}>
                       {type}
@@ -439,7 +529,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                       : 'border-gray-300 text-gray-900 focus:ring-red-600'
                   )}
                 >
-                  <option value="">{t('tous les lieux')}</option>
+                  <option value="">{t('tous lieux')}</option>
                   {locations.map((loc) => (
                     <option key={loc} value={loc}>
                       {loc}
@@ -457,7 +547,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                       : 'bg-gray-300 text-gray-800 hover:bg-gray-400'
                   )}
                 >
-                  {t('reinitialiser les filtres')}
+                  {t('reinitialiser filtres')}
                 </button>
               </div>
             </div>
@@ -489,7 +579,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                   darkMode ? 'text-yellow-400' : 'text-gray-600'
                 )}
               >
-                {t('aucune offre d emploi')}
+                {t('aucune offre emploi')}
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -531,7 +621,7 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                         darkMode ? 'text-gray-300' : 'text-gray-500'
                       )}
                     >
-                      <span className="font-medium">{t('type de contrat')}:</span> {offer.contractType || t('non specifie')}
+                      <span className="font-medium">{t('type de contrat')}:</span> {offer.contract_type || t('non specifie')}
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -571,6 +661,21 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
                             <Trash2 className="h-4 w-4" />
                             {t('supprimer')}
                           </button>
+                          <button
+                            onClick={() => {
+                              setCurrentOffer(offer);
+                              fetchApplications(offer.id);
+                            }}
+                            className={cn(
+                              'flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200',
+                              darkMode
+                                ? 'bg-blue-700 text-yellow-100 hover:bg-blue-600'
+                                : 'bg-blue-500 text-white hover:bg-blue-600'
+                            )}
+                          >
+                            <Users className="h-4 w-4" />
+                            {t('voir candidatures')}
+                          </button>
                         </>
                       )}
                       {user?.role === 'utilisateur' && (
@@ -597,344 +702,489 @@ const OffresEmploi = ({ user, isLoading, onLogout, onSearch }) => {
             )}
           </div>
 
-          <Transition show={isModalOpen} as={React.Fragment}>
-            <Dialog as="div" className="relative z-50" onClose={closeModal}>
-              <Transition.Child
-                as={React.Fragment}
-                enter="ease-out duration-300"
-                enterFrom="opacity-0"
-                enterTo="opacity-100"
-                leave="ease-in duration-200"
-                leaveFrom="opacity-100"
-                leaveTo="opacity-0"
+          {/* Modal Créer/Modifier Offre */}
+          {isModalOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div
+                className={cn(
+                  'w-full max-w-lg rounded-2xl p-6 shadow-xl',
+                  darkMode ? 'bg-gray-800 text-yellow-100' : 'bg-white text-gray-900'
+                )}
               >
-                <div className="fixed inset-0 bg-black/30" />
-              </Transition.Child>
-
-              <div className="fixed inset-0 overflow-y-auto">
-                <div className="flex min-h-full items-center justify-center p-4">
-                  <Transition.Child
-                    as={React.Fragment}
-                    enter="ease-out duration-300"
-                    enterFrom="opacity-0 scale-95"
-                    enterTo="opacity-100 scale-100"
-                    leave="ease-in duration-200"
-                    leaveFrom="opacity-100 scale-100"
-                    leaveTo="opacity-0 scale-95"
-                  >
-                    <Dialog.Panel
+                <h3 className="text-lg font-medium">
+                  {currentOffer ? t('modifier offre') : t('ajouter offre')}
+                </h3>
+                <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+                  <div>
+                    <label
                       className={cn(
-                        'w-full max-w-lg rounded-2xl p-6 shadow-xl',
-                        darkMode ? 'bg-gray-800 text-yellow-100' : 'bg-white text-gray-900'
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
                       )}
                     >
-                      <Dialog.Title as="h3" className="text-lg font-medium">
-                        {currentOffer ? t('modifier une offre') : t('ajouter une offre')}
-                      </Dialog.Title>
-                      <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('titre')}
-                          </label>
-                          <input
-                            type="text"
-                            name="title"
-                            value={formData.title}
-                            onChange={handleInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('description')}
-                          </label>
-                          <textarea
-                            name="description"
-                            value={formData.description}
-                            onChange={handleInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                            rows="4"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('exigences')}
-                          </label>
-                          <textarea
-                            name="requirements"
-                            value={formData.requirements}
-                            onChange={handleInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                            rows="4"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('lieu')}
-                          </label>
-                          <input
-                            type="text"
-                            name="location"
-                            value={formData.location}
-                            onChange={handleInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('fourchette de salaire')}
-                          </label>
-                          <input
-                            type="text"
-                            name="salaryRange"
-                            value={formData.salaryRange}
-                            onChange={handleInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                          />
-                        </div>
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('type de contrat')}
-                          </label>
-                          <input
-                            type="text"
-                            name="contractType"
-                            value={formData.contractType}
-                            onChange={handleInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                          />
-                        </div>
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('date de cloture')}
-                          </label>
-                          <input
-                            type="date"
-                            name="closingDate"
-                            value={formData.closingDate}
-                            onChange={handleInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                          />
-                        </div>
-                        <div className="mt-6 flex justify-end gap-3">
-                          <button
-                            type="button"
-                            onClick={closeModal}
-                            className={cn(
-                              'px-4 py-2 rounded-lg transition-all duration-200',
-                              darkMode
-                                ? 'bg-gray-600 text-yellow-100 hover:bg-gray-500'
-                                : 'bg-gray-300 text-gray-800 hover:bg-gray-400'
-                            )}
-                          >
-                            {t('annuler')}
-                          </button>
-                          <button
-                            type="submit"
-                            className={cn(
-                              'px-4 py-2 rounded-lg transition-all duration-200',
-                              darkMode
-                                ? 'bg-red-600 text-yellow-100 hover:bg-red-700'
-                                : 'bg-red-600 text-white hover:bg-red-700'
-                            )}
-                          >
-                            {currentOffer ? t('mettre a jour') : t('creer')}
-                          </button>
-                        </div>
-                      </form>
-                    </Dialog.Panel>
-                  </Transition.Child>
-                </div>
-              </div>
-            </Dialog>
-          </Transition>
-
-          <Transition show={isApplyModalOpen} as={React.Fragment}>
-            <Dialog as="div" className="relative z-50" onClose={closeApplyModal}>
-              <Transition.Child
-                as={React.Fragment}
-                enter="ease-out duration-300"
-                enterFrom="opacity-0"
-                enterTo="opacity-100"
-                leave="ease-in duration-200"
-                leaveFrom="opacity-100"
-                leaveTo="opacity-0"
-              >
-                <div className="fixed inset-0 bg-black/30" />
-              </Transition.Child>
-
-              <div className="fixed inset-0 overflow-y-auto">
-                <div className="flex min-h-full items-center justify-center p-4">
-                  <Transition.Child
-                    as={React.Fragment}
-                    enter="ease-out duration-300"
-                    enterFrom="opacity-0 scale-95"
-                    enterTo="opacity-100 scale-100"
-                    leave="ease-in duration-200"
-                    leaveFrom="opacity-100 scale-100"
-                    leaveTo="opacity-0 scale-95"
-                  >
-                    <Dialog.Panel
+                      {t('titre')}
+                    </label>
+                    <input
+                      type="text"
+                      name="titre"
+                      value={formData.titre}
+                      onChange={handleInputChange}
                       className={cn(
-                        'w-full max-w-lg rounded-2xl p-6 shadow-xl',
-                        darkMode ? 'bg-gray-800 text-yellow-100' : 'bg-white text-gray-900'
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.titre ? 'border-red-500' : ''
+                      )}
+                      required
+                    />
+                    {formErrors.titre && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.titre}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
                       )}
                     >
-                      <Dialog.Title as="h3" className="text-lg font-medium">
-                        {t('postuler pour l offre', { title: currentOffer?.title })}
-                      </Dialog.Title>
-                      <form onSubmit={handleApplySubmit} className="mt-4 space-y-4">
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      {t('description')}
+                    </label>
+                    <textarea
+                      name="description"
+                      value={formData.description}
+                      onChange={handleInputChange}
+                      className={cn(
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.description ? 'border-red-500' : ''
+                      )}
+                      rows="4"
+                      required
+                    />
+                    {formErrors.description && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.description}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      )}
+                    >
+                      {t('exigences')}
+                    </label>
+                    <textarea
+                      name="exigences"
+                      value={formData.exigences}
+                      onChange={handleInputChange}
+                      className={cn(
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.exigences ? 'border-red-500' : ''
+                      )}
+                      rows="4"
+                      required
+                    />
+                    {formErrors.exigences && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.exigences}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      )}
+                    >
+                      {t('lieu')}
+                    </label>
+                    <input
+                      type="text"
+                      name="lieu"
+                      value={formData.lieu}
+                      onChange={handleInputChange}
+                      className={cn(
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.lieu ? 'border-red-500' : ''
+                      )}
+                      required
+                    />
+                    {formErrors.lieu && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.lieu}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      )}
+                    >
+                      {t('plage de salaire')}
+                    </label>
+                    <input
+                      type="text"
+                      name="plageDeSalaire"
+                      value={formData.plageDeSalaire}
+                      onChange={handleInputChange}
+                      className={cn(
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.salary_range ? 'border-red-500' : ''
+                      )}
+                    />
+                    {formErrors.salary_range && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.salary_range}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      )}
+                    >
+                      {t('type de contrat')}
+                    </label>
+                    <select
+                      name="typeDeContrat"
+                      value={formData.typeDeContrat}
+                      onChange={handleInputChange}
+                      className={cn(
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.contract_type ? 'border-red-500' : ''
+                      )}
+                      required
+                    >
+                      <option value="">{t('selectionner type de contrat')}</option>
+                      <option value="CDI">CDI</option>
+                      <option value="CDD">CDD</option>
+                      <option value="Stage">Stage</option>
+                    </select>
+                    {formErrors.contract_type && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.contract_type}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      )}
+                    >
+                      {t('date de cloture')}
+                    </label>
+                    <input
+                      type="date"
+                      name="dateDeCloture"
+                      value={formData.dateDeCloture}
+                      onChange={handleInputChange}
+                      className={cn(
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.closing_date ? 'border-red-500' : ''
+                      )}
+                      required
+                    />
+                    {formErrors.closing_date && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.closing_date}</p>
+                    )}
+                  </div>
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={closeModal}
+                      className={cn(
+                        'px-4 py-2 rounded-lg transition-all duration-200',
+                        darkMode
+                          ? 'bg-gray-600 text-yellow-100 hover:bg-gray-500'
+                          : 'bg-gray-300 text-gray-800 hover:bg-gray-400'
+                      )}
+                    >
+                      {t('annuler')}
+                    </button>
+                    <button
+                      type="submit"
+                      className={cn(
+                        'px-4 py-2 rounded-lg transition-all duration-200',
+                        darkMode
+                          ? 'bg-red-600 text-yellow-100 hover:bg-red-700'
+                          : 'bg-red-600 text-white hover:bg-red-700'
+                      )}
+                    >
+                      {currentOffer ? t('mettre a jour') : t('creer')}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Candidature */}
+          {isApplyModalOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div
+                className={cn(
+                  'w-full max-w-lg rounded-2xl p-6 shadow-xl',
+                  darkMode ? 'bg-gray-800 text-yellow-100' : 'bg-white text-gray-900'
+                )}
+              >
+                <h3 className="text-lg font-medium">
+                  {t('postuler pour offre', { titre: currentOffer?.title })}
+                </h3>
+                <form onSubmit={handleApplySubmit} className="mt-4 space-y-4">
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      )}
+                    >
+                      {t('lettre de motivation')}
+                    </label>
+                    <textarea
+                      name="lettreDeMotivation"
+                      value={applyData.lettreDeMotivation}
+                      onChange={handleApplyInputChange}
+                      className={cn(
+                        'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
+                          : 'border-gray-300 text-gray-900 focus:ring-red-600',
+                        formErrors.cover_letter ? 'border-red-500' : ''
+                      )}
+                      rows="4"
+                    />
+                    {formErrors.cover_letter && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.cover_letter}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      className={cn(
+                        'block text-sm font-medium',
+                        darkMode ? 'text-yellow-400' : 'text-gray-700'
+                      )}
+                    >
+                      {t('cv')}
+                    </label>
+                    <input
+                      type="file"
+                      name="cv"
+                      accept="application/pdf"
+                      onChange={handleApplyInputChange}
+                      className={cn(
+                        'mt-1 block w-full text-sm',
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600 text-yellow-100'
+                          : 'border-gray-300 text-gray-900',
+                        formErrors.cv ? 'border-red-500' : ''
+                      )}
+                      required
+                    />
+                    {formErrors.cv && (
+                      <p className="text-red-500 text-sm mt-1">{formErrors.cv}</p>
+                    )}
+                  </div>
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={closeApplyModal}
+                      className={cn(
+                        'px-4 py-2 rounded-lg transition-all duration-200',
+                        darkMode
+                          ? 'bg-gray-600 text-yellow-100 hover:bg-gray-500'
+                          : 'bg-gray-300 text-gray-800 hover:bg-gray-400'
+                      )}
+                    >
+                      {t('annuler')}
+                    </button>
+                    <button
+                      type="submit"
+                      className={cn(
+                        'px-4 py-2 rounded-lg transition-all duration-200',
+                        darkMode
+                          ? 'bg-red-600 text-yellow-100 hover:bg-red-700'
+                          : 'bg-red-600 text-white hover:bg-red-700'
+                      )}
+                    >
+                      {t('soumettre candidature')}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Candidatures */}
+          {isApplicationsModalOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div
+                className={cn(
+                  'w-full max-w-2xl rounded-2xl p-6 shadow-xl',
+                  darkMode ? 'bg-gray-800 text-yellow-100' : 'bg-white text-gray-900'
+                )}
+              >
+                <h3 className="text-lg font-medium">
+                  {t('candidatures pour', { titre: currentOffer?.title })}
+                </h3>
+                <div className="mt-4">
+                  {applications.length === 0 ? (
+                    <p className={cn('text-center', darkMode ? 'text-gray-300' : 'text-gray-600')}>
+                      {t('aucune candidature')}
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
+                      {applications.map((app) => (
+                        <div
+                          key={app.id}
+                          className={cn(
+                            'p-4 rounded-lg',
+                            darkMode ? 'bg-gray-700' : 'bg-gray-100'
+                          )}
+                        >
+                          <h4 className="font-medium">{app.user.nom_complet}</h4>
+                          <p className="text-sm">
+                            <strong>{t('email')}:</strong> {app.user.email}
+                          </p>
+                          <p className="text-sm">
+                            <strong>{t('telephone')}:</strong> {app.user.telephone || t('non specifie')}
+                          </p>
+                          <p className="text-sm">
+                            <strong>{t('lettre de motivation')}:</strong>{' '}
+                            {app.cover_letter || t('aucune lettre')}
+                          </p>
+                          <p className="text-sm">
+                            <strong>{t('statut')}:</strong> {t(app.status)}
+                          </p>
+                          <p className="text-sm">
+                            <strong>{t('date candidature')}:</strong>{' '}
+                            {new Date(app.created_at).toLocaleDateString('fr-FR')}
+                          </p>
+                          <div className="mt-2 flex gap-2">
+                            {app.cv_url ? (
+                              <a
+                                href={app.cv_url}
+                                download
+                                onClick={async (e) => {
+                                  try {
+                                    const response = await fetch(app.cv_url, { method: 'HEAD' });
+                                    if (!response.ok) {
+                                      e.preventDefault();
+                                      Swal.fire({
+                                        title: t('erreur'),
+                                        text: t('cv non trouve'),
+                                        icon: 'error',
+                                        customClass: {
+                                          popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+                                        },
+                                      });
+                                    }
+                                  } catch (err) {
+                                    e.preventDefault();
+                                    Swal.fire({
+                                      title: t('erreur'),
+                                      text: t('cv non trouve'),
+                                      icon: 'error',
+                                      customClass: {
+                                        popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+                                      },
+                                    });
+                                  }
+                                }}
+                                className={cn(
+                                  'px-3 py-1 rounded-lg text-sm transition-all duration-200',
+                                  darkMode
+                                    ? 'bg-blue-600 text-yellow-100 hover:bg-blue-500'
+                                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                                )}
+                              >
+                                {t('telecharger cv')}
+                              </a>
+                            ) : (
+                              <span className="text-sm text-red-500">{t('cv non trouve')}</span>
                             )}
-                          >
-                            {t('lettre de motivation')}
-                          </label>
-                          <textarea
-                            name="coverLetter"
-                            value={applyData.coverLetter}
-                            onChange={handleApplyInputChange}
-                            className={cn(
-                              'mt-1 block w-full rounded-md shadow-sm focus:outline-none focus:ring-2',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100 focus:ring-yellow-400'
-                                : 'border-gray-300 text-gray-900 focus:ring-red-600'
-                            )}
-                            rows="4"
-                          />
+                            <button
+                              onClick={() => {
+                                Swal.fire({
+                                  title: app.user.nom_complet,
+                                  html: `
+                                    <div class="text-left text-sm">
+                                      <p><strong>${t('email')}:</strong> ${app.user.email}</p>
+                                      <p><strong>${t('telephone')}:</strong> ${
+                                        app.user.telephone || t('non specifie')
+                                      }</p>
+                                    </div>
+                                  `,
+                                  icon: 'info',
+                                  confirmButtonText: t('fermer'),
+                                  customClass: {
+                                    popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+                                  },
+                                });
+                              }}
+                              className={cn(
+                                'px-3 py-1 rounded-lg text-sm transition-all duration-200',
+                                darkMode
+                                  ? 'bg-green-600 text-yellow-100 hover:bg-green-500'
+                                  : 'bg-green-500 text-white hover:bg-green-600'
+                              )}
+                            >
+                              {t('voir profil')}
+                            </button>
+                            <select
+                              value={app.status}
+                              onChange={(e) => handleUpdateStatus(app.id, e.target.value)}
+                              className={cn(
+                                'rounded-md text-sm',
+                                darkMode
+                                  ? 'bg-gray-600 text-yellow-100 border-gray-500'
+                                  : 'bg-white text-gray-900 border-gray-300'
+                              )}
+                            >
+                              <option value="pending">{t('en attente')}</option>
+                              <option value="accepted">{t('accepte')}</option>
+                              <option value="rejected">{t('rejete')}</option>
+                            </select>
+                          </div>
                         </div>
-                        <div>
-                          <label
-                            className={cn(
-                              'block text-sm font-medium',
-                              darkMode ? 'text-yellow-400' : 'text-gray-700'
-                            )}
-                          >
-                            {t('cv')}
-                          </label>
-                          <input
-                            type="file"
-                            name="cv"
-                            accept=".pdf,.doc,.docx"
-                            onChange={handleApplyInputChange}
-                            className={cn(
-                              'mt-1 block w-full text-sm',
-                              darkMode
-                                ? 'bg-gray-700 border-gray-600 text-yellow-100'
-                                : 'border-gray-300 text-gray-900'
-                            )}
-                            required
-                          />
-                        </div>
-                        <div className="mt-6 flex justify-end gap-3">
-                          <button
-                            type="button"
-                            onClick={closeApplyModal}
-                            className={cn(
-                              'px-4 py-2 rounded-lg transition-all duration-200',
-                              darkMode
-                                ? 'bg-gray-600 text-yellow-100 hover:bg-gray-500'
-                                : 'bg-gray-300 text-gray-800 hover:bg-gray-400'
-                            )}
-                          >
-                            {t('annuler')}
-                          </button>
-                          <button
-                            type="submit"
-                            className={cn(
-                              'px-4 py-2 rounded-lg transition-all duration-200',
-                              darkMode
-                                ? 'bg-red-600 text-yellow-100 hover:bg-red-700'
-                                : 'bg-red-600 text-white hover:bg-red-700'
-                            )}
-                          >
-                            {t('soumettre la candidature')}
-                          </button>
-                        </div>
-                      </form>
-                    </Dialog.Panel>
-                  </Transition.Child>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={closeApplicationsModal}
+                    className={cn(
+                      'px-4 py-2 rounded-lg transition-all duration-200',
+                      darkMode
+                        ? 'bg-gray-600 text-yellow-100 hover:bg-gray-500'
+                        : 'bg-gray-300 text-gray-800 hover:bg-gray-400'
+                    )}
+                  >
+                    {t('fermer')}
+                  </button>
                 </div>
               </div>
-            </Dialog>
-          </Transition>
+            </div>
+          )}
         </main>
       </div>
     </div>

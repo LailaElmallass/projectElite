@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Check, ArrowRight, Sun, Moon, Edit, Trash2, PlusCircle } from 'lucide-react';
 import api from '@/lib/api';
+import { cn } from '../lib/utils';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { useDarkMode } from '../DarkModeContext';
 import Navbar from '@/components/Navbar';
 import Sidebar from '@/components/Sidebar';
 import Swal from 'sweetalert2';
 
 const Tests = ({ user, onLogout, setUser }) => {
+    const { t } = useTranslation();
   const [tests, setTests] = useState([]);
+  const { darkMode } = useDarkMode();
   const [questions, setQuestions] = useState([]);
   const [activeTest, setActiveTest] = useState(null);
   const [currentQuestion, setCurrentQuestion] = useState(0);
@@ -840,7 +845,13 @@ const Tests = ({ user, onLogout, setUser }) => {
       <div className="pt-20 pb-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-8">
-            <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400">Tests Disponibles</h1>
+          <h1 className={cn(
+                  'text-3xl font-bold',
+                  darkMode ? 'text-yellow-400' : 'text-gray-900'
+                )}
+              >
+                {t('Tests Disponibles')}
+              </h1>
             {user.role === 'admin' && (
               <button
                 onClick={() => setIsAdding(true)}

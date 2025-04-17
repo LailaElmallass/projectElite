@@ -41,12 +41,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/password', [ProfileController::class, 'updatePassword'])->name('profile.update-password');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
-    // Tableaux de bord
-    Route::get('/dashboard', [DashboardController::class, 'userDashboard'])->name('user-dashboard');
-    // Placeholder routes for other dashboards (to be implemented similarly)
-    Route::get('/coach_dashboard', [DashboardController::class, 'coachDashboard'])->name('coach-dashboard');
-    Route::get('/entreprise_dashboard', [DashboardController::class, 'entrepriseDashboard'])->name('entreprise-dashboard');
-    Route::get('/admin_dashboard', [DashboardController::class, 'adminDashboard'])->name('admin-dashboard');
+    // dashboard 
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/dashboard', [DashboardController::class, 'userDashboard'])->name('user-dashboard');
+        Route::get('/coach_dashboard', [DashboardController::class, 'coachDashboard'])->name('coach-dashboard');
+        Route::get('/entreprise_dashboard', [DashboardController::class, 'entrepriseDashboard'])->name('entreprise-dashboard');
+        Route::get('/admin_dashboard', [DashboardController::class, 'adminDashboard'])->name('admin-dashboard');
+    });
 
     // Gestion des utilisateurs
     Route::get('/users', [UserController::class, 'index'])->name('users.index');
@@ -113,6 +114,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/interviews/{id}/candidates', [InterviewController::class, 'getCandidates'])->name('interviews.candidates');
     Route::middleware('role:admin')->group(function () {
         Route::get('/all-interviews', [InterviewController::class, 'allInterviews'])->name('interviews.admin');
+        Route::delete('/interviews/{id}', [InterviewController::class, 'destroy']);
         Route::put('/interviews/{id}/confirm', [InterviewController::class, 'confirm'])->name('interviews.confirm');
     });
 
@@ -122,6 +124,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('role:admin,entreprise')->group(function () {
         Route::post('/job-offers', [JobOfferController::class, 'store'])->name('job-offers.store');
         Route::put('/job-offers/{id}', [JobOfferController::class, 'update'])->name('job-offers.update');
+        Route::put('/job-applications/{applicationId}', [JobApplicationController::class, 'updateStatus']);
         Route::delete('/job-offers/{id}', [JobOfferController::class, 'destroy'])->name('job-offers.destroy');
         Route::get('/job-offers/{id}/applications', [JobOfferController::class, 'applications'])->name('job-offers.applications');
     });

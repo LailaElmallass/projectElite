@@ -5,13 +5,17 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class JobOffer extends Model
+class JobApplication extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'title', 'description', 'requirements', 'location',
-        'salary_range', 'contract_type', 'closing_date',
+        'user_id', 'job_offer_id', 'cover_letter', 'cv_path', 'status',
+    ];
+
+    protected $casts = [
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
 
     public function user()
@@ -19,15 +23,8 @@ class JobOffer extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function applications()
+    public function jobOffer()
     {
-        return $this->hasMany(JobApplication::class);
-    }
-
-    public function appliedBy()
-    {
-        return $this->belongsToMany(User::class, 'job_applications')
-                    ->withPivot('cover_letter', 'cv_path', 'status')
-                    ->withTimestamps();
+        return $this->belongsTo(JobOffer::class);
     }
 }

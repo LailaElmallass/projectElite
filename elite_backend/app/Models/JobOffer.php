@@ -14,6 +14,10 @@ class JobOffer extends Model
         'salary_range', 'contract_type', 'closing_date',
     ];
 
+    protected $casts = [
+        'closing_date' => 'date',
+    ];
+
     public function user()
     {
         return $this->belongsTo(User::class);

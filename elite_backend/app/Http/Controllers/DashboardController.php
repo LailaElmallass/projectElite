@@ -9,8 +9,6 @@ use App\Models\Notification;
 use App\Models\Formation;
 use App\Models\JobOffer;
 use App\Models\Interview;
-use App\Models\Capsule;
-use App\Models\DiffusionWorkshop;
 
 class DashboardController extends Controller
 {
@@ -34,7 +32,7 @@ class DashboardController extends Controller
                 'name' => $user->nomComplet ?? trim(($user->prenom ?? '') . ' ' . ($user->nom ?? '')),
                 'email' => $user->email,
                 'role' => $user->role ?? 'utilisateur',
-                'student_status' => $user->is_student ?? null, // Use is_student instead of student_status
+                'is_student' => $user->is_student ?? false,
                 'created_at' => $user->created_at->toDateTimeString(),
                 'nomComplet' => $user->nomComplet ?? trim(($user->prenom ?? '') . ' ' . ($user->nom ?? '')) ?: 'Invité',
             ];
@@ -58,12 +56,12 @@ class DashboardController extends Controller
             $recommendedCourses = Formation::where('is_active', true)
                 ->latest()
                 ->take(5)
-                ->get(['id', 'title', 'description'])
+                ->get(['id', 'title', 'duration', 'match_score'])
                 ->map(function ($formation) {
                     return [
                         'title' => $formation->title,
-                        'duration' => '4h', // Fallback, replace with actual column if exists
-                        'match' => '90%', // Fallback, replace with match_score if exists
+                        'duration' => $formation->duration ?? '4h',
+                        'match' => $formation->match_score ? "{$formation->match_score}%" : '90%',
                     ];
                 })->toArray();
 
@@ -73,17 +71,17 @@ class DashboardController extends Controller
             })
                 ->latest()
                 ->take(5)
-                ->get(['id', 'title', 'description'])
+                ->get(['id', 'title', 'sector', 'match_score'])
                 ->map(function ($jobOffer) {
                     return [
                         'title' => $jobOffer->title,
-                        'sector' => 'Technologie', // Fallback, replace with sector if exists
-                        'match' => '85%', // Fallback, replace with match_score if exists
+                        'sector' => $jobOffer->sector ?? 'Technologie',
+                        'match' => $jobOffer->match_score ? "{$jobOffer->match_score}%" : '85%',
                     ];
                 })->toArray();
 
             // Interviews (confirmed, limited to 5)
-            $interviews = Interview::whereHas('applications', function ($query) use ($user) {
+            $interviews = Interview::whereHas('application', function ($query) use ($user) {
                 $query->where('user_id', $user->id)->where('status', 'confirmed');
             })
                 ->latest()
@@ -98,27 +96,41 @@ class DashboardController extends Controller
                     ];
                 })->toArray();
 
-            // Performance by Skill (static since test_results table is missing)
-            $performance = [
-                ['name' => 'Communication', 'score' => 85],
-                ['name' => 'Leadership', 'score' => 70],
-                ['name' => 'Technique', 'score' => 90],
-                ['name' => 'Créativité', 'score' => 65],
-                ['name' => 'Adaptabilité', 'score' => 80],
-            ];
+            // Performance by Skill (static fallback if TestResult table is missing)
+            $performance = \App\Models\TestResult::where('user_id', $user->id)
+                ->take(5)
+                ->get(['skill_name as name', 'score'])
+                ->toArray();
+            
+            if (empty($performance)) {
+                $performance = [
+                    ['name' => 'Communication', 'score' => 85],
+                    ['name' => 'Leadership', 'score' => 70],
+                    ['name' => 'Technique', 'score' => 90],
+                    ['name' => 'Créativité', 'score' => 65],
+                    ['name' => 'Adaptabilité', 'score' => 80],
+                ];
+            }
 
-            // Career Orientation (static)
-            $career = [
-                ['name' => 'Ingénierie', 'value' => 40],
-                ['name' => 'Management', 'value' => 30],
-                ['name' => 'Marketing', 'value' => 15],
-                ['name' => 'Finance', 'value' => 15],
-            ];
+            // Career Orientation (static fallback if CareerAssessment table is missing)
+            $career = \App\Models\CareerAssessment::where('user_id', $user->id)
+                ->take(4)
+                ->get(['field_name as name', 'percentage as value'])
+                ->toArray();
+            
+            if (empty($career)) {
+                $career = [
+                    ['name' => 'Ingénierie', 'value' => 40],
+                    ['name' => 'Management', 'value' => 30],
+                    ['name' => 'Marketing', 'value' => 15],
+                    ['name' => 'Finance', 'value' => 15],
+                ];
+            }
 
             // Stats for cards
             $stats = [
                 'skills' => [
-                    'value' => 7, // Replace with dynamic count if test_results exists
+                    'value' => \App\Models\TestResult::where('user_id', $user->id)->count() ?: 7,
                     'subtext' => 'Compétences validées',
                     'trend' => '+2 ce mois',
                 ],
@@ -135,7 +147,7 @@ class DashboardController extends Controller
                     'trend' => 'Prochain: 15 Nov',
                 ],
                 'studyTime' => [
-                    'value' => '24h', // Replace with actual logic
+                    'value' => '24h', // Replace with actual logic if tracking study time
                     'subtext' => 'Ce mois',
                     'trend' => '+3h vs dernier mois',
                 ],
@@ -158,8 +170,23 @@ class DashboardController extends Controller
             Log::error('Dashboard error: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json([
                 'status' => 'error',
-                'message' => 'Failed to load dashboard data: ' . $e->getMessage(),
+                'message' => 'Échec du chargement des données: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function coachDashboard(Request $request)
+    {
+        return response()->json(['status' => 'success', 'message' => 'Coach dashboard not implemented'], 200);
+    }
+
+    public function entrepriseDashboard(Request $request)
+    {
+        return response()->json(['status' => 'success', 'message' => 'Enterprise dashboard not implemented'], 200);
+    }
+
+    public function adminDashboard(Request $request)
+    {
+        return response()->json(['status' => 'success', 'message' => 'Admin dashboard not implemented'], 200);
     }
 }

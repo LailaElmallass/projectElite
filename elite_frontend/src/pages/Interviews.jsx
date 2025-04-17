@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Dialog, Transition } from '@headlessui/react';
-import { Search, Calendar, CheckCircle, UserPlus } from 'lucide-react';
+import { Search, Calendar, CheckCircle, UserPlus, Trash2 } from 'lucide-react';
 import api from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -193,6 +192,51 @@ const Interviews = ({ user, isLoading, onLogout }) => {
     }
   };
 
+  const handleDelete = async (id) => {
+    Swal.fire({
+      title: t('confirmation'),
+      text: t('confirmer suppression entretien'),
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: darkMode ? '#facc15' : '#dc2626',
+      cancelButtonColor: darkMode ? '#4b5563' : '#6b7280',
+      confirmButtonText: t('supprimer'),
+      cancelButtonText: t('annuler'),
+      customClass: {
+        popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+      },
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          await api.delete(`/interviews/${id}`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          });
+          setInterviews(interviews.filter((interview) => interview.id !== id));
+          Swal.fire({
+            icon: 'success',
+            title: t('succes'),
+            text: t('entretien supprime'),
+            timer: 1500,
+            showConfirmButton: false,
+            customClass: {
+              popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+            },
+          });
+        } catch (err) {
+          setError(err.response?.data?.message || t('erreur suppression'));
+          Swal.fire({
+            icon: 'error',
+            title: t('erreur'),
+            text: err.response?.data?.message || t('erreur suppression'),
+            customClass: {
+              popup: darkMode ? 'dark-swal bg-gray-800 text-yellow-100' : 'bg-white text-gray-900',
+            },
+          });
+        }
+      }
+    });
+  };
+
   const handleAddInterview = (newInterview) => {
     setInterviews([...interviews, newInterview]);
     setIsModalOpen(false);
@@ -244,7 +288,7 @@ const Interviews = ({ user, isLoading, onLogout }) => {
   }
 
   return (
-     <div className={cn("min-h-screen", darkMode ? "dark bg-elite-black-900" : "bg-elite-yellow-50")}>
+    <div className={cn('min-h-screen', darkMode ? 'dark bg-elite-black-900' : 'bg-elite-yellow-50')}>
       <Sidebar isOpen={isSidebarOpen} setIsOpen={setSidebarOpen} />
       <div className="flex-1">
         <Navbar
@@ -430,7 +474,7 @@ const Interviews = ({ user, isLoading, onLogout }) => {
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {user.role !== 'admin' &&
-                        user.role !== 'entreprise' &&
+                        user.role !== 'enterprise' &&
                         interview.status === 'confirmed' && (
                           <button
                             onClick={() => handleApply(interview.id)}
@@ -464,8 +508,22 @@ const Interviews = ({ user, isLoading, onLogout }) => {
                           {t('confirmer')}
                         </button>
                       )}
+                      {user.role === 'admin' && (
+                        <button
+                          onClick={() => handleDelete(interview.id)}
+                          className={cn(
+                            'flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200',
+                            darkMode
+                              ? 'bg-red-800 text-yellow-100 hover:bg-red-900'
+                              : 'bg-red-500 text-white hover:bg-red-600'
+                          )}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          {t('supprimer')}
+                        </button>
+                      )}
                     </div>
-                    {(user.role === 'admin' || (user.role === 'entreprise' && interview.user_id === user.id)) && (
+                    {(user.role === 'admin' || (user.role === 'enterprise' && interview.user_id === user.id)) && (
                       <div className="mt-4">
                         <h4
                           className={cn(
