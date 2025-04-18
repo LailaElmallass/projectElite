@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Check, ArrowRight, Brain, Sun, Moon } from 'lucide-react';
 import api from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
@@ -15,8 +15,11 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
     const [retryLoading, setRetryLoading] = useState(false);
     const [needsStudentSelection, setNeedsStudentSelection] = useState(false);
     const navigate = useNavigate();
+    const isMounted = useRef(true);
+    const fetchController = useRef(null);
 
     useEffect(() => {
+        isMounted.current = true;
         if (!user) {
             console.log('No user, redirecting to signin');
             localStorage.removeItem('token');
@@ -35,21 +38,35 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
         } else {
             fetchGeneralTests();
         }
+
+        return () => {
+            isMounted.current = false;
+            if (fetchController.current) {
+                fetchController.current.abort();
+            }
+        };
     }, [user, navigate]);
 
     const fetchGeneralTests = async (retries = 3) => {
+        if (!isMounted.current) return;
         try {
             setLoading(true);
+            setGeneralTests([]);
+            setQuestions([]);
+            localStorage.removeItem('no_tests_reason');
+
             const token = localStorage.getItem('token');
             if (!token) {
-                throw new Error('No authentication token found');
+                throw new Error('Aucun jeton d’authentification trouvé');
             }
 
+            fetchController.current = new AbortController();
             const response = await api.get('/tests/general', {
                 headers: { Authorization: `Bearer ${token}` },
+                signal: fetchController.current.signal,
             });
 
-            console.log('General tests API response', {
+            console.log('Réponse API tests généraux', {
                 success: response.data.success,
                 tests: response.data.data.tests,
                 needs_student_selection: response.data.data.needs_student_selection,
@@ -57,31 +74,54 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
                 reason: response.data.errors?.reason,
             });
 
+            if (!isMounted.current) return;
+
             const tests = response.data.data.tests || [];
             setGeneralTests(tests);
 
             if (response.data.data.needs_student_selection) {
-                console.log('Needs student selection');
+                console.log('Sélection du statut étudiant requise');
                 setNeedsStudentSelection(true);
                 setQuestions([]);
             } else if (tests.length > 0 && tests[0].questions.length > 0) {
-                console.log('Tests found, setting questions', { test_id: tests[0].id });
+                console.log('Tests trouvés, définition des questions', { test_id: tests[0].id });
                 setNeedsStudentSelection(false);
-                setQuestions(
-                    tests[0].questions.map((q) => {
+                const parsedQuestions = tests[0].questions
+                    .map((q) => {
                         try {
-                            return {
-                                ...q,
-                                options: typeof q.options === 'string' ? JSON.parse(q.options) : q.options,
-                            };
+                            const options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+                            if (!Array.isArray(options) || options.length < 2) {
+                                console.error('Options invalides pour la question', { question: q });
+                                return null;
+                            }
+                            return { ...q, options };
                         } catch (e) {
-                            console.error('Error parsing options for question', { question: q, error: e });
+                            console.error('Erreur lors du parsing des options', { question: q, error: e });
                             return null;
                         }
-                    }).filter(Boolean)
-                );
+                    })
+                    .filter(Boolean);
+                setQuestions(parsedQuestions);
+                console.log('Questions définies', {
+                    question_count: parsedQuestions.length,
+                    test_id: tests[0].id,
+                    question_ids: parsedQuestions.map(q => q.id),
+                });
+                if (parsedQuestions.length === 0) {
+                    console.warn('Aucune question valide après parsing', { tests });
+                    localStorage.setItem('no_tests_reason', 'no_valid_questions');
+                    Swal.fire({
+                        icon: 'info',
+                        title: 'Aucun test disponible',
+                        text: 'Les questions du test sont invalides. Contactez l’administrateur.',
+                        toast: true,
+                        position: 'top',
+                        timer: 5000,
+                        showConfirmButton: false,
+                    });
+                }
             } else {
-                console.warn('No valid tests or questions found', { tests });
+                console.warn('Aucun test ou question valide trouvé', { tests });
                 setNeedsStudentSelection(false);
                 setQuestions([]);
                 localStorage.setItem('no_tests_reason', response.data.errors?.reason || 'no_matching_tests');
@@ -96,13 +136,19 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
                 });
             }
         } catch (error) {
-            console.error('Error fetching general tests:', {
+            if (error.name === 'AbortError') {
+                console.log('Requête annulée');
+                return;
+            }
+            console.error('Erreur lors de la récupération des tests généraux:', {
                 message: error.message,
                 response: error.response?.data,
                 status: error.response?.status,
             });
+            if (!isMounted.current) return;
+
             if (error.response?.status === 401) {
-                console.log('Unauthorized, clearing token and redirecting to signin');
+                console.log('Non autorisé, suppression du jeton et redirection vers signin');
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
                 onLogout();
@@ -110,7 +156,7 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
                 return;
             }
             if (retries > 0) {
-                console.log(`Retrying fetchGeneralTests, ${retries} attempts left`);
+                console.log(`Nouvelle tentative de fetchGeneralTests, ${retries} essais restants`);
                 await new Promise((resolve) => setTimeout(resolve, 1000));
                 return fetchGeneralTests(retries - 1);
             }
@@ -121,53 +167,45 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
             Swal.fire({
                 icon: 'error',
                 title: 'Erreur',
-                text: 'Erreur lors du chargement des tests généraux. Veuillez vérifier votre connexion et réessayer.',
+                text: error.response?.data?.message || 'Erreur lors du chargement des tests généraux. Veuillez vérifier votre connexion et réessayer.',
                 toast: true,
                 position: 'top',
                 timer: 5000,
                 showConfirmButton: false,
             });
         } finally {
-            setLoading(false);
+            if (isMounted.current) {
+                setLoading(false);
+                fetchController.current = null;
+            }
         }
     };
 
-    const handleStudentSelection = async (isStudentChoice) => {
+    const handleStudentSelection = async (isStudent) => {
         try {
             setLoading(true);
             const token = localStorage.getItem('token');
-            if (!token) {
-                throw new Error('No authentication token');
-            }
-            console.log('Sending student selection', { is_student: isStudentChoice, token });
-            const response = await api.put('/users/student-status', { is_student: isStudentChoice }, {
-                headers: { Authorization: `Bearer ${token}` },
-            });
-            console.log('Student selection response', response.data);
+            const response = await api.post(
+                '/users/student-status',
+                { is_student: isStudent },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+
             const updatedUser = response.data.data.user;
             localStorage.setItem('user', JSON.stringify(updatedUser));
             setUser(updatedUser);
             setNeedsStudentSelection(false);
             await fetchGeneralTests();
         } catch (error) {
-            console.error('Error updating student status:', {
+            console.error('Erreur lors de la mise à jour du statut étudiant:', {
                 message: error.message,
+                response: error.response?.data,
                 status: error.response?.status,
-                data: error.response?.data,
             });
-            let message = 'Erreur lors de la mise à jour du statut étudiant.';
-            if (error.response?.status === 404) {
-                message = 'Service indisponible. Contactez l’administrateur.';
-            } else if (error.response?.status === 401) {
-                localStorage.removeItem('token');
-                localStorage.removeItem('user');
-                navigate('/signin');
-                message = 'Session expirée. Veuillez vous reconnecter.';
-            }
             Swal.fire({
                 icon: 'error',
                 title: 'Erreur',
-                text: message,
+                text: 'Erreur lors de la mise à jour du statut étudiant. Veuillez réessayer.',
                 toast: true,
                 position: 'top',
                 timer: 5000,
@@ -179,27 +217,47 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
     };
 
     const handleAnswer = (questionId, optionIndex) => {
-        setAnswers({ ...answers, [questionId]: optionIndex });
-        console.log('Answer recorded', { questionId, optionIndex });
+        setAnswers((prev) => ({
+            ...prev,
+            [questionId]: optionIndex,
+        }));
+        console.log('Réponse enregistrée', { questionId, optionIndex, answers: { ...answers, [questionId]: optionIndex } });
     };
 
     const nextQuestion = async () => {
         if (currentQuestion < questions.length - 1) {
-            setCurrentQuestion(currentQuestion + 1);
-        } else {
-            await submitTest();
-        }
-    };
-
-    const submitTest = async () => {
-        try {
-            setLoading(true);
-            const token = localStorage.getItem('token');
-            if (Object.keys(answers).length === 0) {
+            if (answers[questions[currentQuestion].id] === undefined) {
                 Swal.fire({
                     icon: 'warning',
-                    title: 'Aucune réponse',
-                    text: 'Veuillez répondre à au moins une question avant de soumettre.',
+                    title: 'Réponse requise',
+                    text: 'Veuillez sélectionner une réponse avant de passer à la question suivante.',
+                    toast: true,
+                    position: 'top',
+                    timer: 3000,
+                    showConfirmButton: false,
+                });
+                return;
+            }
+            setCurrentQuestion(currentQuestion + 1);
+        } else {
+            if (Object.keys(answers).length < questions.length) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Réponses incomplètes',
+                    text: 'Veuillez répondre à toutes les questions avant de soumettre le test.',
+                    toast: true,
+                    position: 'top',
+                    timer: 3000,
+                    showConfirmButton: false,
+                });
+                return;
+            }
+            if (!generalTests[0]?.id) {
+                console.error('Aucun ID de test disponible', { generalTests });
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Erreur',
+                    text: 'Impossible de soumettre le test : ID du test manquant.',
                     toast: true,
                     position: 'top',
                     timer: 5000,
@@ -207,67 +265,116 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
                 });
                 return;
             }
+            console.log('Soumission du test depuis nextQuestion', {
+                testId: generalTests[0].id,
+                answers,
+            });
+            await submitTest(generalTests[0].id);
+        }
+    };
+
+    const submitTest = async (testId) => {
+        try {
+            setLoading(true);
+            console.log('submitTest appelé', { testId, answers: JSON.stringify(answers) });
+
+            if (!testId) {
+                throw new Error('L’ID du test est manquant');
+            }
+            if (!answers || Object.keys(answers).length === 0) {
+                throw new Error('Aucune réponse fournie');
+            }
+
+            const token = localStorage.getItem('token');
+            if (!token) {
+                throw new Error('Aucun jeton d’authentification trouvé');
+            }
+
+            const formattedAnswers = Object.entries(answers).map(([questionId, answer]) => ({
+                question_id: parseInt(questionId),
+                answer: parseInt(answer),
+            }));
 
             const response = await api.post(
                 '/tests/general/submit',
-                { answers },
-                { headers: { Authorization: `Bearer ${token}` } }
+                {
+                    test_id: testId,
+                    answers: formattedAnswers,
+                },
+                {
+                    headers: { Authorization: `Bearer ${token}` },
+                }
             );
 
-            const feedbackData = response.data.data.feedback;
-            setFeedback(feedbackData);
-
-            const userData = JSON.parse(localStorage.getItem('user')) || {};
-            const updatedUser = {
-                ...userData,
-                target_audience: feedbackData.recommended_audience,
-                is_first_time: false,
-            };
-            localStorage.setItem('user', JSON.stringify(updatedUser));
-            setUser(updatedUser);
-
-            console.log('Test submitted', {
-                feedback: feedbackData,
-                target_audience: feedbackData.recommended_audience,
+            console.log('Réponse de soumission du test', {
+                success: response.data.success,
+                score: response.data.data.score,
+                total_questions: response.data.data.total_questions,
+                percentage: response.data.data.percentage,
+                feedback: response.data.data.feedback,
+                message: response.data.message,
             });
 
-            localStorage.setItem('user_audience', feedbackData.recommended_audience);
-            localStorage.setItem('first_test_completed', 'true');
+            if (!isMounted.current) return;
+
+            setFeedback(response.data.data.feedback);
             setShowResults(true);
-        } catch (error) {
-            console.error('Error submitting test:', {
-                message: error.message,
-                response: error.response?.data,
-            });
-            if (error.response?.status === 401) {
-                localStorage.removeItem('token');
-                localStorage.removeItem('user');
-                onLogout();
-                navigate('/signin');
-            }
+
             Swal.fire({
-                icon: 'error',
-                title: 'Erreur',
-                text: error.response?.data?.message || 'Erreur lors de la soumission du test.',
+                icon: 'success',
+                title: 'Test soumis !',
+                text: `Votre score : ${response.data.data.score}/${response.data.data.total_questions} (${response.data.data.percentage}%)`,
                 toast: true,
                 position: 'top',
                 timer: 5000,
                 showConfirmButton: false,
             });
-            setFeedback({
-                points_forts: ['Effort fourni'],
-                domaines_d_amélioration: ['Erreur réseau détectée'],
-                recommandations: ['Vérifiez votre connexion et réessayez'],
-                recommended_audience: 'etudiant_maroc',
+
+            const updatedUser = { ...user, is_first_time: false, target_audience: response.data.data.feedback.recommended_audience };
+            localStorage.setItem('user', JSON.stringify(updatedUser));
+            setUser(updatedUser);
+        } catch (error) {
+            console.error('Erreur lors de la soumission du test:', {
+                message: error.message,
+                response: error.response?.data,
+                status: error.response?.status,
+                fullResponse: JSON.stringify(error.response?.data),
             });
-            setShowResults(true);
+
+            if (!isMounted.current) return;
+
+            if (error.response?.status === 401) {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                onLogout();
+                navigate('/signin');
+                return;
+            }
+
+            const errorMessage = error.response?.data?.message || error.message || 'Erreur lors de la soumission du test.';
+            const errorDetails = error.response?.data?.error || '';
+
+            Swal.fire({
+                icon: 'error',
+                title: 'Erreur',
+                text: `${errorMessage}${errorDetails ? `: ${errorDetails}` : ''}`,
+                toast: true,
+                position: 'top',
+                timer: 7000,
+                showConfirmButton: false,
+                footer: error.response?.status >= 500
+                    ? '<button onclick="window.location.reload()">Réessayer</button>'
+                    : null,
+            });
         } finally {
-            setLoading(false);
+            if (isMounted.current) {
+                setLoading(false);
+            }
         }
     };
 
     const proceedToDashboard = () => {
-        console.log('Navigating to dashboard');
+        console.log('Redirection vers le tableau de bord');
         navigate('/dashboard');
     };
 
@@ -335,12 +442,13 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
             unknown: 'Aucun test général n’est disponible pour le moment. Contactez l’administrateur.',
         }[reason] || 'Aucun test général n’est disponible pour le moment.';
 
-        console.log('Rendering no tests message', {
+        console.log('Affichage du message aucun test', {
             user_id: user?.id,
             is_student: user?.is_student,
             is_first_time: user?.is_first_time,
             tests_fetched: generalTests.length,
             reason,
+            general_tests: generalTests,
         });
 
         return (
@@ -381,11 +489,7 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
         );
     }
 
-    if (!showResults) {
-        const question = questions[currentQuestion];
-        const totalQuestions = questions.length;
-        const progress = ((currentQuestion + 1) / totalQuestions) * 100;
-
+    if (showResults) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black py-12 px-4 sm:px-6 lg:px-8 relative">
                 <button
@@ -394,62 +498,88 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
                 >
                     {isDarkMode ? <Sun className="h-6 w-6" /> : <Moon className="h-6 w-6" />}
                 </button>
-                <div className="max-w-3xl mx-auto bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8">
-                    <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400 mb-6">
-                        Test Général
+                <div className="max-w-4xl mx-auto bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8">
+                    <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400 mb-8">
+                        Résultats de Votre Test Général
                     </h1>
-                    <div className="flex items-center justify-between mb-4">
-                        <span className="text-sm text-elite-black-600 dark:text-elite-black-300">
-                            Question {currentQuestion + 1} sur {totalQuestions}
-                        </span>
-                        <span className="text-sm font-semibold text-elite-yellow-600 dark:text-elite-yellow-400">
-                            {Math.round(progress)}% complété
-                        </span>
-                    </div>
-                    <div className="w-full h-3 bg-elite-black-200 dark:bg-elite-black-600 rounded-full overflow-hidden">
-                        <div
-                            className="h-full bg-elite-red-500 rounded-full transition-all duration-300"
-                            style={{ width: `${progress}%` }}
-                        />
-                    </div>
-                    <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl mt-6">
-                        <h2 className="text-xl font-medium text-elite-yellow-600 dark:text-elite-yellow-400 mb-6">
-                            {question?.question || 'Question non disponible'}
-                        </h2>
-                        <div className="space-y-4">
-                            {question?.options?.map((option, index) => (
-                                <div
-                                    key={index}
-                                    onClick={() => handleAnswer(question.id, index)}
-                                    className={`p-4 border rounded-lg cursor-pointer transition-all duration-200 ${
-                                        answers[question.id] === index
-                                            ? 'border-elite-red-500 bg-elite-red-100 dark:bg-elite-red-500/20'
-                                            : 'border-elite-black-300 dark:border-elite-black-600 hover:border-elite-red-500'
-                                    }`}
-                                >
-                                    <div className="flex items-center">
-                                        <div
-                                            className={`h-6 w-6 rounded-full border mr-3 flex items-center justify-center ${
-                                                answers[question.id] === index
-                                                    ? 'border-elite-red-500 bg-elite-red-500 text-white'
-                                                    : 'border-elite-black-400 dark:border-elite-black-500 hover:border-elite-red-500'
-                                            }`}
-                                        >
-                                            {answers[question.id] === index && <Check className="h-4 w-4" />}
-                                        </div>
-                                        <span className="text-elite-black-700 dark:text-elite-black-300">{option}</span>
-                                    </div>
-                                </div>
-                            ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                        <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl">
+                            <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
+                                <Check className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
+                                Vos Points Forts
+                            </h2>
+                            <ul className="space-y-3">
+                                {feedback?.points_forts?.length > 0 ? (
+                                    feedback.points_forts.map((strength, index) => (
+                                        <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
+                                            <Check className="h-5 w-5 mr-2 text-elite-yellow-500" />
+                                            {strength}
+                                        </li>
+                                    ))
+                                ) : (
+                                    <li className="text-elite-black-500 dark:text-elite-black-400">
+                                        Aucun point fort spécifique identifié.
+                                    </li>
+                                )}
+                            </ul>
+                        </div>
+                        <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl">
+                            <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
+                                <ArrowRight className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
+                                Axes d’Amélioration
+                            </h2>
+                            <ul className="space-y-3">
+                                {feedback?.domaines_d_amélioration?.length > 0 ? (
+                                    feedback.domaines_d_amélioration.map((weakness, index) => (
+                                        <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
+                                            <ArrowRight className="h-5 w-5 mr-2 text-elite-yellow-500" />
+                                            {weakness}
+                                        </li>
+                                    ))
+                                ) : (
+                                    <li className="text-elite-black-500 dark:text-elite-black-400">
+                                        Aucun axe d’amélioration spécifique identifié.
+                                    </li>
+                                )}
+                            </ul>
                         </div>
                     </div>
-                    <div className="flex justify-end mt-6">
+                    <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl mb-8">
+                        <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
+                            <Brain className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
+                            Recommandations
+                        </h2>
+                        <ul className="space-y-3">
+                            {feedback?.recommandations?.length > 0 ? (
+                                feedback.recommandations.map((recommendation, index) => (
+                                    <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
+                                        <Brain className="h-5 w-5 mr-2 text-elite-yellow-500" />
+                                        {recommendation}
+                                    </li>
+                                ))
+                            ) : (
+                                <li className="text-elite-black-500 dark:text-elite-black-400">
+                                    Aucune recommandation spécifique fournie.
+                                </li>
+                            )}
+                        </ul>
+                    </div>
+                    {feedback?.recommended_audience && (
+                        <div className="text-center mb-8">
+                            <p className="text-elite-black-600 dark:text-elite-black-300 text-lg">
+                                Profil recommandé :{' '}
+                                <span className="font-semibold text-elite-red-500 dark:text-elite-red-400">
+                                    {feedback.recommended_audience.replace('_', ' ')}
+                                </span>
+                            </p>
+                        </div>
+                    )}
+                    <div className="flex justify-center">
                         <button
-                            onClick={nextQuestion}
-                            disabled={answers[question?.id] === undefined}
-                            className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                            onClick={proceedToDashboard}
+                            className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors flex items-center"
                         >
-                            {currentQuestion < questions.length - 1 ? 'Suivant' : 'Terminer'}
+                            Continuer vers le tableau de bord
                             <ArrowRight className="h-5 w-5 ml-2" />
                         </button>
                     </div>
@@ -457,6 +587,10 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
             </div>
         );
     }
+
+    const question = questions[currentQuestion];
+    const totalQuestions = questions.length;
+    const progress = ((currentQuestion + 1) / totalQuestions) * 100;
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-elite-black-100 to-elite-black-300 dark:from-elite-black-900 dark:to-black py-12 px-4 sm:px-6 lg:px-8 relative">
@@ -466,88 +600,50 @@ const TestGeneral = ({ user, onLogout, setUser, toggleTheme, isDarkMode }) => {
             >
                 {isDarkMode ? <Sun className="h-6 w-6" /> : <Moon className="h-6 w-6" />}
             </button>
-            <div className="max-w-4xl mx-auto bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8">
-                <h1 className="text-3xl font-bold text-elite-red-500 dark:text-elite-red-400 mb-8">
-                    Résultats de Votre Test Général
-                </h1>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                    <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl">
-                        <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
-                            <Check className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
-                            Vos Points Forts
-                        </h2>
-                        <ul className="space-y-3">
-                            {feedback?.points_forts?.length > 0 ? (
-                                feedback.points_forts.map((strength, index) => (
-                                    <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
-                                        <Check className="h-5 w-5 mr-2 text-elite-yellow-500" />
-                                        {strength}
-                                    </li>
-                                ))
-                            ) : (
-                                <li className="text-elite-black-500 dark:text-elite-black-400">
-                                    Aucun point fort spécifique identifié.
-                                </li>
-                            )}
-                        </ul>
+            <div className="max-w-3xl mx-auto bg-white dark:bg-elite-black-800 rounded-xl shadow-xl p-8">
+                <div className="mb-6">
+                    <div className="flex justify-between items-center mb-4">
+                        <h1 className="text-2xl font-bold text-elite-red-500 dark:text-elite-red-400">
+                            Test Général - Question {currentQuestion + 1} sur {totalQuestions}
+                        </h1>
+                        <span className="text-elite-black-500 dark:text-elite-black-400">
+                            {generalTests[0]?.title || 'Test Général'}
+                        </span>
                     </div>
-                    <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl">
-                        <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
-                            <ArrowRight className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
-                            Axes d’Amélioration
-                        </h2>
-                        <ul className="space-y-3">
-                            {feedback?.domaines_d_amélioration?.length > 0 ? (
-                                feedback.domaines_d_amélioration.map((weakness, index) => (
-                                    <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
-                                        <ArrowRight className="h-5 w-5 mr-2 text-elite-yellow-500" />
-                                        {weakness}
-                                    </li>
-                                ))
-                            ) : (
-                                <li className="text-elite-black-500 dark:text-elite-black-400">
-                                    Aucun axe d’amélioration spécifique identifié.
-                                </li>
-                            )}
-                        </ul>
+                    <div className="w-full bg-elite-black-200 dark:bg-elite-black-700 rounded-full h-2.5">
+                        <div
+                            className="bg-elite-yellow-500 h-2.5 rounded-full transition-all duration-300"
+                            style={{ width: `${progress}%` }}
+                        ></div>
                     </div>
                 </div>
-                <div className="bg-elite-black-50 dark:bg-elite-black-700 p-6 rounded-xl mb-8">
-                    <h2 className="text-xl font-semibold text-elite-yellow-600 dark:text-elite-yellow-400 mb-4 flex items-center">
-                        <Brain className="h-6 w-6 mr-2 text-elite-red-500 dark:text-elite-red-400" />
-                        Recommandations
+                <div className="mb-8">
+                    <h2 className="text-xl font-semibold text-elite-black-700 dark:text-elite-black-300 mb-4">
+                        {question.question}
                     </h2>
-                    <ul className="space-y-3">
-                        {feedback?.recommandations?.length > 0 ? (
-                            feedback.recommandations.map((recommendation, index) => (
-                                <li key={index} className="flex items-start text-elite-black-700 dark:text-elite-black-300">
-                                    <Brain className="h-5 w-5 mr-2 text-elite-yellow-500" />
-                                    {recommendation}
-                                </li>
-                            ))
-                        ) : (
-                            <li className="text-elite-black-500 dark:text-elite-black-400">
-                                Aucune recommandation spécifique fournie.
-                            </li>
-                        )}
-                    </ul>
-                </div>
-                {feedback?.recommended_audience && (
-                    <div className="text-center mb-8">
-                        <p className="text-elite-black-600 dark:text-elite-black-300 text-lg">
-                            Profil recommandé :{' '}
-                            <span className="font-semibold text-elite-red-500 dark:text-elite-red-400">
-                                {feedback.recommended_audience}
-                            </span>
-                        </p>
+                    <div className="space-y-3">
+                        {question.options.map((option, index) => (
+                            <button
+                                key={index}
+                                onClick={() => handleAnswer(question.id, index)}
+                                className={`w-full text-left p-4 rounded-lg border transition-colors ${
+                                    answers[question.id] === index
+                                        ? 'bg-elite-yellow-100 border-elite-yellow-500 text-elite-black-900 dark:bg-elite-yellow-900 dark:border-elite-yellow-400 dark:text-elite-yellow-100'
+                                        : 'bg-elite-black-50 border-elite-black-200 text-elite-black-700 hover:bg-elite-black-100 dark:bg-elite-black-700 dark:border-elite-black-600 dark:text-elite-black-300 dark:hover:bg-elite-black-600'
+                                }`}
+                            >
+                                {option}
+                            </button>
+                        ))}
                     </div>
-                )}
-                <div className="flex justify-center">
+                </div>
+                <div className="flex justify-end">
                     <button
-                        onClick={proceedToDashboard}
-                        className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors flex items-center"
+                        onClick={nextQuestion}
+                        disabled={loading}
+                        className="bg-elite-red-500 text-white px-6 py-3 rounded-lg hover:bg-elite-red-600 transition-colors flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Continuer vers le tableau de bord
+                        {currentQuestion < questions.length - 1 ? 'Suivant' : 'Soumettre'}
                         <ArrowRight className="h-5 w-5 ml-2" />
                     </button>
                 </div>

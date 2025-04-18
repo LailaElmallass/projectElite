@@ -64,8 +64,9 @@ class TestController extends Controller
     {
         try {
             $test = Test::with(['questions' => function ($query) {
-                $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index');
-            }])->find($testId);
+                $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index')
+                      ->whereNull('deleted_at');
+            }])->whereNull('deleted_at')->find($testId);
 
             if (!$test) {
                 Log::warning('Test not found', ['test_id' => $testId, 'user_id' => Auth::id() ?: 'guest']);
@@ -74,21 +75,32 @@ class TestController extends Controller
 
             $questions = $test->questions->map(function ($question) use ($testId) {
                 $rawOptions = $question->getRawOriginal('options');
-                $options = is_array($question->options) ? $question->options : [];
-                if (empty($options) && $rawOptions) {
+                $options = is_array($question->options) ? $question->options : json_decode($rawOptions, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    Log::error('Failed to parse options JSON', [
+                        'test_id' => $testId,
+                        'question_id' => $question->id,
+                        'raw_options' => $rawOptions,
+                        'json_error' => json_last_error_msg(),
+                    ]);
+                    return null;
+                }
+                if (!is_array($options) || count($options) < 2) {
                     Log::warning('Invalid options for question', [
                         'test_id' => $testId,
                         'question_id' => $question->id,
-                        'raw_options' => $rawOptions
+                        'raw_options' => $rawOptions,
+                        'parsed_options' => $options,
                     ]);
+                    return null;
                 }
                 return [
                     'id' => $question->id,
                     'question' => $question->question,
                     'options' => $options,
-                    'correct_answer_index' => $question->correct_answer_index,
+                    'correct_answer_index' => (int)$question->correct_answer_index,
                 ];
-            });
+            })->filter()->values();
 
             Log::info('Questions fetched', [
                 'test_id' => $testId,
@@ -96,7 +108,7 @@ class TestController extends Controller
                 'user_id' => Auth::id() ?: 'guest'
             ]);
 
-            return $this->respond(true, ['questions' => $questions->values()], 'Questions retrieved successfully');
+            return $this->respond(true, ['questions' => $questions], 'Questions retrieved successfully');
         } catch (\Exception $e) {
             Log::error('Error in getQuestions', [
                 'test_id' => $testId,
@@ -111,8 +123,9 @@ class TestController extends Controller
     {
         try {
             $test = Test::with(['questions' => function ($query) {
-                $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index');
-            }])->find($id);
+                $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index')
+                      ->whereNull('deleted_at');
+            }])->whereNull('deleted_at')->find($id);
 
             if (!$test) {
                 Log::warning('Test not found', ['test_id' => $id, 'user_id' => Auth::id() ?: 'guest']);
@@ -121,21 +134,32 @@ class TestController extends Controller
 
             $test->questions = $test->questions->map(function ($question) use ($id) {
                 $rawOptions = $question->getRawOriginal('options');
-                $options = is_array($question->options) ? $question->options : [];
-                if (empty($options) && $rawOptions) {
+                $options = is_array($question->options) ? $question->options : json_decode($rawOptions, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    Log::error('Failed to parse options JSON', [
+                        'test_id' => $id,
+                        'question_id' => $question->id,
+                        'raw_options' => $rawOptions,
+                        'json_error' => json_last_error_msg(),
+                    ]);
+                    return null;
+                }
+                if (!is_array($options) || count($options) < 2) {
                     Log::warning('Invalid options for question', [
                         'test_id' => $id,
                         'question_id' => $question->id,
-                        'raw_options' => $rawOptions
+                        'raw_options' => $rawOptions,
+                        'parsed_options' => $options,
                     ]);
+                    return null;
                 }
                 return [
                     'id' => $question->id,
                     'question' => $question->question,
                     'options' => $options,
-                    'correct_answer_index' => $question->correct_answer_index,
+                    'correct_answer_index' => (int)$question->correct_answer_index,
                 ];
-            });
+            })->filter()->values();
 
             Log::info('Test fetched', [
                 'test_id' => $id,
@@ -195,7 +219,7 @@ class TestController extends Controller
                     'test_id' => $test->id,
                     'question' => $questionData['question'],
                     'options' => json_encode($options),
-                    'correct_answer_index' => (int) $questionData['correct_answer_index'],
+                    'correct_answer_index' => (int)$questionData['correct_answer_index'],
                 ]);
             }
 
@@ -239,44 +263,14 @@ class TestController extends Controller
     {
         Log::info('Updating test', ['test_id' => $testId, 'request_data' => $request->all()]);
 
-        $validator = Validator::make($request->all(), $this->getTestValidationRules(true), [
-            'title.string' => 'The title must be a string.',
-            'title.max' => 'The title must not exceed 255 characters.',
-            'duration.string' => 'The duration must be a string.',
-            'duration.max' => 'The duration must not exceed 50 characters.',
-            'description.string' => 'The description must be a string.',
-            'is_general.boolean' => 'The is_general field must be true or false.',
-            'target_audience.required_if' => 'The target audience is required when the test is not general.',
-            'target_audience.in' => 'The selected target audience is invalid.',
-            'is_student.required_if' => 'The is_student field is required when the test is general.',
-            'is_student.boolean' => 'The is_student field must be true or false.',
-            'questions.required' => 'At least one question is required.',
-            'questions.array' => 'Questions must be an array.',
-            'questions.min' => 'At least one question is required.',
-            'questions.*.question.required' => 'Each question must have a question text.',
-            'questions.*.question.string' => 'Each question must be a string.',
-            'questions.*.options.required' => 'Each question must have options.',
-            'questions.*.options.array' => 'Options must be an array.',
-            'questions.*.options.min' => 'Each question must have at least 2 options.',
-            'questions.*.options.*.required' => 'Each option must be a non-empty string.',
-            'questions.*.options.*.string' => 'Each option must be a string.',
-            'questions.*.correct_answer_index.required' => 'Each question must specify a correct answer index.',
-            'questions.*.correct_answer_index.integer' => 'The correct answer index must be an integer.',
-            'questions.*.correct_answer_index.min' => 'The correct answer index must be at least 0.',
-        ]);
-
+        $validator = Validator::make($request->all(), $this->getTestValidationRules(true));
         if ($validator->fails()) {
             Log::warning('Validation failed for test update', [
                 'test_id' => $testId,
                 'errors' => $validator->errors()->all(),
                 'request_data' => $request->all()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()->all(),
-                'data' => []
-            ], 422);
+            return $this->respond(false, [], 'Validation failed', $validator->errors()->all(), 422);
         }
 
         try {
@@ -319,27 +313,17 @@ class TestController extends Controller
                     $options = array_values(array_filter($questionData['options'], fn($opt) => !empty(trim($opt))));
                     if (count($options) < 2) {
                         DB::rollBack();
-                        return response()->json([
-                            'success' => false,
-                            'message' => "Question at index $index must have at least 2 valid options",
-                            'errors' => [],
-                            'data' => []
-                        ], 422);
+                        return $this->respond(false, [], "Question at index $index must have at least 2 valid options", [], 422);
                     }
                     if ($questionData['correct_answer_index'] >= count($options)) {
                         DB::rollBack();
-                        return response()->json([
-                            'success' => false,
-                            'message' => "Correct answer index for question at index $index is out of bounds",
-                            'errors' => [],
-                            'data' => []
-                        ], 422);
+                        return $this->respond(false, [], "Correct answer index for question at index $index is out of bounds", [], 422);
                     }
 
                     $question->test_id = $test->id;
                     $question->question = $questionData['question'];
                     $question->options = json_encode($options);
-                    $question->correct_answer_index = (int) $questionData['correct_answer_index'];
+                    $question->correct_answer_index = (int)$questionData['correct_answer_index'];
                     $question->save();
                 }
             }
@@ -349,11 +333,7 @@ class TestController extends Controller
             DB::commit();
 
             Log::info('Test updated successfully', ['test_id' => $testId, 'question_count' => $test->questions_count]);
-            return response()->json([
-                'success' => true,
-                'message' => 'Test updated successfully',
-                'data' => ['test' => $test->fresh(['questions'])]
-            ], 200);
+            return $this->respond(true, ['test' => $test->fresh(['questions'])], 'Test updated successfully');
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error updating test', [
@@ -362,12 +342,7 @@ class TestController extends Controller
                 'trace' => $e->getTraceAsString(),
                 'request_data' => $request->all()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Error updating test: ' . $e->getMessage(),
-                'errors' => [],
-                'data' => []
-            ], 500);
+            return $this->respond(false, [], 'Error updating test: ' . $e->getMessage(), [], 500);
         }
     }
 
@@ -423,7 +398,7 @@ class TestController extends Controller
                 'test_id' => $request->test_id,
                 'question' => $request->question,
                 'options' => json_encode($options),
-                'correct_answer_index' => (int) $request->correct_answer_index,
+                'correct_answer_index' => (int)$request->correct_answer_index,
             ]);
 
             $test = Test::findOrFail($request->test_id);
@@ -507,7 +482,11 @@ class TestController extends Controller
                 'answers' => 'required|array',
             ]);
 
-            $test = Test::with('questions')->findOrFail($data['test_id']);
+            $test = Test::with(['questions' => function ($query) {
+                $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index')
+                      ->whereNull('deleted_at');
+            }])->whereNull('deleted_at')->findOrFail($data['test_id']);
+
             $questions = $test->questions;
 
             if ($questions->isEmpty()) {
@@ -521,9 +500,31 @@ class TestController extends Controller
                     return $this->respond(false, [], 'Invalid answer data', [], 422);
                 }
                 $question = $questions->firstWhere('id', $questionId);
-                $options = is_array($question->options) ? $question->options : [];
-                if ($answerIndex >= count($options)) {
-                    Log::warning('Answer index out of bounds', ['question_id' => $questionId, 'answer_index' => $answerIndex]);
+                $options = is_array($question->options) ? $question->options : json_decode($question->getRawOriginal('options'), true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    Log::error('Failed to parse options JSON in submit', [
+                        'test_id' => $test->id,
+                        'question_id' => $questionId,
+                        'raw_options' => $question->getRawOriginal('options'),
+                        'json_error' => json_last_error_msg(),
+                    ]);
+                    return $this->respond(false, [], 'Invalid question options', [], 422);
+                }
+                if (!is_array($options) || count($options) < 2) {
+                    Log::warning('Invalid options in submit', [
+                        'test_id' => $test->id,
+                        'question_id' => $questionId,
+                        'options' => $options,
+                    ]);
+                    return $this->respond(false, [], 'Invalid question options', [], 422);
+                }
+                if ((int)$answerIndex >= count($options)) {
+                    Log::warning('Answer index out of bounds', [
+                        'test_id' => $test->id,
+                        'question_id' => $questionId,
+                        'answer_index' => $answerIndex,
+                        'options_count' => count($options),
+                    ]);
                     return $this->respond(false, [], 'Answer index out of bounds', [], 422);
                 }
             }
@@ -578,160 +579,124 @@ class TestController extends Controller
         }
     }
 
-    public function getGeneralTest()
+    public function getGeneralTest(Request $request)
     {
         try {
-            $user = Auth::user();
-            Log::info('Fetching general tests', [
+            $user = $request->user();
+            if (!$user) {
+                Log::warning('Unauthorized access to getGeneralTest', [
+                    'token' => $request->bearerToken(),
+                ]);
+                return $this->respond(false, [], 'Utilisateur non authentifié', [], 401);
+            }
+
+            Log::info('Fetching general test', [
                 'user_id' => $user->id,
                 'is_student' => $user->is_student,
                 'is_first_time' => $user->is_first_time,
             ]);
 
-            if (is_null($user->is_student)) {
-                Log::info('User needs student selection', ['user_id' => $user->id]);
+            if ($user->is_student === null) {
+                Log::info('User requires student selection', ['user_id' => $user->id]);
                 return $this->respond(true, [
                     'tests' => [],
                     'needs_student_selection' => true,
-                ], 'Student status required');
+                ], 'Sélection du statut étudiant requise');
             }
 
-            if (!$user->is_first_time) {
-                Log::info('User is not first-time, ineligible for general test', ['user_id' => $user->id]);
-                return $this->respond(true, [
-                    'tests' => [],
-                    'needs_student_selection' => false,
-                ], 'User has already completed the general test', ['reason' => 'not_first_time']);
-            }
-
-            $tests = Test::where('is_general', true)
-                ->whereNull('target_audience')
+            $test = Test::where('is_general', true)
                 ->where('is_student', $user->is_student)
                 ->whereNull('deleted_at')
+                ->orderBy('created_at', 'desc')
                 ->with(['questions' => function ($query) {
-                    $query->whereNull('deleted_at')
-                          ->select('id', 'test_id', 'question', 'options', 'correct_answer_index');
+                    $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index')
+                          ->whereNull('deleted_at');
                 }])
-                ->get();
+                ->first();
 
-            Log::info('Raw tests query', [
-                'user_id' => $user->id,
-                'is_student' => $user->is_student,
-                'test_count' => $tests->count(),
-                'tests' => $tests->map(function ($test) {
-                    return [
-                        'id' => $test->id,
-                        'title' => $test->title,
-                        'is_general' => $test->is_general,
-                        'is_student' => $test->is_student,
-                        'target_audience' => $test->target_audience,
-                        'questions_count' => $test->questions_count,
-                        'questions' => $test->questions->toArray(),
-                    ];
-                })->toArray(),
-            ]);
-
-            $filteredTests = $tests->map(function ($test) {
-                $test->questions = $test->questions->map(function ($question) use ($test) {
-                    try {
-                        $options = json_decode($question->options, true);
-                        Log::info('Processing question options', [
-                            'test_id' => $test->id,
-                            'question_id' => $question->id,
-                            'options_raw' => $question->options,
-                            'options_parsed' => $options,
-                            'options_type' => gettype($options),
-                            'options_count' => is_array($options) ? count($options) : 0,
-                            'correct_answer_index' => $question->correct_answer_index,
-                            'correct_answer_index_type' => gettype($question->correct_answer_index),
-                        ]);
-                        if (!is_array($options)) {
-                            Log::warning('Options is not an array', [
-                                'test_id' => $test->id,
-                                'question_id' => $question->id,
-                                'options' => $question->options,
-                            ]);
-                            return null;
-                        }
-                        if (count($options) < 2) {
-                            Log::warning('Options has fewer than 2 items', [
-                                'test_id' => $test->id,
-                                'question_id' => $question->id,
-                                'options' => $options,
-                            ]);
-                            return null;
-                        }
-                        if (!is_numeric($question->correct_answer_index)) {
-                            Log::warning('Correct answer index is not numeric', [
-                                'test_id' => $test->id,
-                                'question_id' => $question->id,
-                                'correct_answer_index' => $question->correct_answer_index,
-                            ]);
-                            return null;
-                        }
-                        if ($question->correct_answer_index >= count($options)) {
-                            Log::warning('Correct answer index out of bounds', [
-                                'test_id' => $test->id,
-                                'question_id' => $question->id,
-                                'correct_answer_index' => $question->correct_answer_index,
-                                'options_count' => count($options),
-                            ]);
-                            return null;
-                        }
-                        return [
-                            'id' => $question->id,
-                            'question' => $question->question,
-                            'options' => $options,
-                            'correct_answer_index' => (int) $question->correct_answer_index,
-                        ];
-                    } catch (\Exception $e) {
-                        Log::error('Error parsing question options', [
-                            'test_id' => $test->id,
-                            'question_id' => $question->id,
-                            'options' => $question->options,
-                            'error' => $e->getMessage(),
-                        ]);
-                        return null;
-                    }
-                })->filter()->values();
-
-                Log::info('Questions after filtering', [
-                    'test_id' => $test->id,
-                    'question_count' => $test->questions->count(),
-                ]);
-
-                return $test->questions->isNotEmpty() ? $test : null;
-            })->filter()->values();
-
-            if ($filteredTests->isEmpty()) {
-                Log::warning('No valid tests found after filtering', [
+            if (!$test) {
+                Log::warning('No general test found for user', [
                     'user_id' => $user->id,
                     'is_student' => $user->is_student,
-                    'reason' => 'no_valid_tests',
                 ]);
                 return $this->respond(true, [
                     'tests' => [],
                     'needs_student_selection' => false,
-                ], 'No general tests for this profile', ['reason' => 'no_valid_tests']);
+                ], 'Aucun test général disponible pour votre profil', [
+                    'reason' => 'no_matching_tests',
+                ]);
             }
 
-            Log::info('Valid tests returned', [
+            $validQuestions = $test->questions->filter(function ($question) {
+                try {
+                    $options = is_array($question->options)
+                        ? $question->options
+                        : json_decode($question->getRawOriginal('options'), true);
+                    if (json_last_error() !== JSON_ERROR_NONE) {
+                        Log::error('Invalid JSON in question options', [
+                            'question_id' => $question->id,
+                            'test_id' => $question->test_id,
+                            'raw_options' => $question->getRawOriginal('options'),
+                            'json_error' => json_last_error_msg(),
+                        ]);
+                        return false;
+                    }
+                    if (!is_array($options) || count($options) < 2) {
+                        Log::warning('Invalid options for question', [
+                            'question_id' => $question->id,
+                            'test_id' => $question->test_id,
+                            'options' => $options,
+                        ]);
+                        return false;
+                    }
+                    $question->options = $options;
+                    return true;
+                } catch (\Exception $e) {
+                    Log::error('Error processing question options', [
+                        'question_id' => $question->id,
+                        'test_id' => $question->test_id,
+                        'error' => $e->getMessage(),
+                    ]);
+                    return false;
+                }
+            })->values();
+
+            if ($validQuestions->isEmpty()) {
+                Log::warning('No valid questions for general test', [
+                    'test_id' => $test->id,
+                    'user_id' => $user->id,
+                    'question_count' => $test->questions->count(),
+                ]);
+                return $this->respond(true, [
+                    'tests' => [],
+                    'needs_student_selection' => false,
+                ], 'Aucune question valide trouvée pour ce test', [
+                    'reason' => 'no_valid_questions',
+                ]);
+            }
+
+            $test->questions = $validQuestions;
+
+            Log::info('General test retrieved successfully', [
                 'user_id' => $user->id,
-                'test_count' => $filteredTests->count(),
-                'test_ids' => $filteredTests->pluck('id')->toArray(),
+                'test_id' => $test->id,
+                'question_count' => $validQuestions->count(),
+                'question_ids' => $validQuestions->pluck('id')->toArray(),
             ]);
 
             return $this->respond(true, [
-                'tests' => $filteredTests,
+                'tests' => [$test],
                 'needs_student_selection' => false,
-            ], 'General tests retrieved successfully');
+            ], 'Test général récupéré avec succès');
         } catch (\Exception $e) {
             Log::error('Error in getGeneralTest', [
-                'user_id' => Auth::id() ?: 'guest',
+                'user_id' => $user->id ?? 'unknown',
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            return $this->respond(false, [], 'Server error retrieving general tests', [$e->getMessage()], 500);
+            return $this->respond(false, [], 'Erreur serveur lors de la récupération du test général', [
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -739,57 +704,149 @@ class TestController extends Controller
     {
         try {
             $user = $request->user();
-            $data = $request->validate([
-                'answers' => 'required|array',
-            ]);
-
-            if (is_null($user->is_student)) {
-                Log::warning('User has not selected student status', ['user_id' => $user->id]);
-                return $this->respond(false, [], 'Student status required', [], 400);
+            if (!$user) {
+                Log::warning('Unauthorized access to submitGeneralTest', [
+                    'token' => $request->bearerToken(),
+                ]);
+                return $this->respond(false, [], 'Utilisateur non authentifié', [], 401);
             }
 
-            $test = Test::where('is_general', true)
+            Log::info('Submitting general test', [
+                'user_id' => $user->id,
+                'is_student' => $user->is_student,
+                'request_data' => $request->all(),
+            ]);
+
+            // Validation
+            $validator = Validator::make($request->all(), [
+                'test_id' => 'required|integer|exists:tests,id',
+                'answers' => 'required|array|min:1',
+                'answers.*.question_id' => 'required|integer|exists:questions,id',
+                'answers.*.answer' => 'required|integer|min:0',
+            ], [
+                'test_id.required' => 'L\'ID du test est requis.',
+                'test_id.exists' => 'Le test spécifié n\'existe pas.',
+                'answers.required' => 'Les réponses sont requises.',
+                'answers.array' => 'Les réponses doivent être un tableau.',
+                'answers.min' => 'Au moins une réponse est requise.',
+                'answers.*.question_id.required' => 'L\'ID de la question est requis.',
+                'answers.*.question_id.exists' => 'Une question spécifiée n\'existe pas.',
+                'answers.*.answer.required' => 'Une réponse est requise pour chaque question.',
+                'answers.*.answer.integer' => 'La réponse doit être un entier.',
+                'answers.*.answer.min' => 'La réponse doit être un index valide (0 ou plus).',
+            ]);
+
+            if ($validator->fails()) {
+                Log::warning('Validation failed for submitGeneralTest', [
+                    'user_id' => $user->id,
+                    'errors' => $validator->errors()->toArray(),
+                ]);
+                return $this->respond(false, [], 'Validation échouée', $validator->errors()->toArray(), 422);
+            }
+
+            $testId = $request->input('test_id');
+            $answers = $request->input('answers');
+
+            // Charger le test
+            $test = Test::where('id', $testId)
+                ->where('is_general', true)
                 ->where('is_student', $user->is_student)
+                ->whereNull('deleted_at')
                 ->with(['questions' => function ($query) {
-                    $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index');
+                    $query->select('id', 'test_id', 'question', 'options', 'correct_answer_index')
+                          ->whereNull('deleted_at');
                 }])
                 ->first();
 
             if (!$test) {
-                Log::warning('No general test found', ['user_id' => $user->id, 'is_student' => $user->is_student]);
-                return $this->respond(false, [], 'No general test available', [], 404);
+                Log::warning('Test not found or invalid for user', [
+                    'user_id' => $user->id,
+                    'test_id' => $testId,
+                    'is_student' => $user->is_student,
+                ]);
+                return $this->respond(false, [], 'Test général introuvable ou non applicable', ['reason' => 'invalid_test'], 404);
             }
 
-            $questions = $test->questions;
-            if ($questions->isEmpty()) {
-                Log::warning('No questions found for general test', ['test_id' => $test->id, 'user_id' => $user->id]);
-                return $this->respond(false, [], 'No questions found for this test', [], 400);
+            // Vérifier les questions
+            if (!$test->questions || $test->questions->isEmpty()) {
+                Log::warning('No active questions found for test', [
+                    'user_id' => $user->id,
+                    'test_id' => $testId,
+                ]);
+                return $this->respond(false, [], 'Aucune question active trouvée pour ce test', ['reason' => 'no_questions'], 422);
             }
 
-            foreach ($data['answers'] as $questionId => $answerIndex) {
-                if (!is_numeric($answerIndex) || !Question::where('id', $questionId)->exists()) {
-                    Log::warning('Invalid answer data for general test', ['question_id' => $questionId, 'answer_index' => $answerIndex]);
-                    return $this->respond(false, [], 'Invalid answer data', [], 422);
+            // Valider les réponses
+            $questionIds = $test->questions->pluck('id')->toArray();
+            $score = 0;
+            $totalQuestions = count($questionIds);
+            $answerMap = [];
+
+            foreach ($answers as $answer) {
+                $questionId = $answer['question_id'];
+                $userAnswer = $answer['answer'];
+
+                if (!in_array($questionId, $questionIds)) {
+                    Log::warning('Invalid question ID in answers', [
+                        'user_id' => $user->id,
+                        'test_id' => $testId,
+                        'question_id' => $questionId,
+                    ]);
+                    return $this->respond(false, [], 'ID de question invalide', ['question_id' => $questionId], 422);
                 }
-                $question = $questions->firstWhere('id', $questionId);
-                $options = is_array($question->options) ? $question->options : [];
-                if ($answerIndex >= count($options)) {
-                    Log::warning('Answer index out of bounds for general test', ['question_id' => $questionId, 'answer_index' => $answerIndex]);
-                    return $this->respond(false, [], 'Answer index out of bounds', [], 422);
+
+                $question = $test->questions->firstWhere('id', $questionId);
+                $options = json_decode($question->getRawOriginal('options'), true);
+
+                if (!is_array($options) || $userAnswer >= count($options)) {
+                    Log::warning('Invalid answer index', [
+                        'user_id' => $user->id,
+                        'test_id' => $testId,
+                        'question_id' => $questionId,
+                        'answer' => $userAnswer,
+                    ]);
+                    return $this->respond(false, [], 'Index de réponse invalide', ['question_id' => $questionId], 422);
+                }
+
+                $answerMap[$questionId] = $userAnswer;
+                if ($userAnswer === $question->correct_answer_index) {
+                    $score++;
                 }
             }
 
-            $feedback = $this->callGemini($questions, $data['answers'], $user->goal ?? 'Non défini', true);
+            // Appeler Gemini pour feedback et recommandation
+            $feedback = $this->callGemini($test->questions, $answerMap, $user->goal ?? 'Non défini', true);
 
-            $user->update([
-                'target_audience' => $feedback['recommended_audience'] ?? 'etudiant_maroc',
-                'is_first_time' => false,
+            // Mettre à jour l'utilisateur
+            $user->is_first_time = false;
+            $user->target_audience = $feedback['recommended_audience'];
+            $user->save();
+
+            Log::info('General test submitted successfully', [
+                'user_id' => $user->id,
+                'test_id' => $testId,
+                'score' => $score,
+                'total_questions' => $totalQuestions,
+                'recommended_audience' => $feedback['recommended_audience'],
+                'feedback' => $feedback,
             ]);
 
-            return $this->respond(true, ['feedback' => $feedback], 'General test submitted successfully');
+            return $this->respond(true, [
+                'score' => $score,
+                'total_questions' => $totalQuestions,
+                'percentage' => ($totalQuestions > 0) ? round(($score / $totalQuestions) * 100, 2) : 0,
+                'feedback' => $feedback,
+                'recommended_audience' => $feedback['recommended_audience'],
+            ], 'Test soumis avec succès');
         } catch (\Exception $e) {
-            Log::error('Error in submitGeneralTest', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
-            return $this->respond(false, [], 'Server error submitting general test', [$e->getMessage()], 500);
+            Log::error('Error in submitGeneralTest', [
+                'user_id' => $user->id ?? 'unknown',
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return $this->respond(false, [], 'Erreur serveur lors de la soumission du test', [
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -798,24 +855,35 @@ class TestController extends Controller
         try {
             $client = new Client();
             $apiKey = env('GEMINI_API_KEY');
+            Log::info('Preparing Gemini API call', [
+                'api_key_exists' => !empty($apiKey),
+                'is_general' => $isGeneral,
+                'goal' => $goal,
+                'user_id' => Auth::id() ?: 'guest',
+                'question_count' => $questions->count(),
+                'answer_count' => count($answers),
+            ]);
 
             if (empty($apiKey)) {
-                Log::warning('GEMINI_API_KEY is not set');
-                return [
-                    'points_forts' => ['Tentative d’analyse'],
-                    'domaines_d_amélioration' => ['Configuration manquante'],
-                    'recommandations' => ['Vérifiez la configuration de l’API'],
-                    'recommended_audience' => $isGeneral ? 'etudiant_maroc' : null,
-                ];
+                Log::error('GEMINI_API_KEY is not set');
+                throw new \Exception('GEMINI_API_KEY is not configured in .env');
+            }
+
+            if ($questions->isEmpty()) {
+                Log::warning('No questions provided to Gemini');
+                throw new \Exception('No questions available for analysis');
             }
 
             $apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
             $studentResponses = [];
             foreach ($questions as $question) {
-                $options = is_array($question->options) ? $question->options : [];
-                if (empty($options)) {
-                    Log::warning('Invalid question options in callGemini', ['question_id' => $question->id]);
+                $options = is_array($question->options) ? $question->options : json_decode($question->getRawOriginal('options'), true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    Log::error('Failed to parse options JSON in callGemini', [
+                        'question_id' => $question->id,
+                        'raw_options' => $question->getRawOriginal('options'),
+                    ]);
                     continue;
                 }
                 $answerIndex = $answers[$question->id] ?? -1;
@@ -827,66 +895,111 @@ class TestController extends Controller
                 $studentResponses[] = [
                     'question' => $question->question,
                     'student_answer' => $studentAnswer,
-                    'right_answer' => $correctAnswer,
+                    'correct_answer' => $correctAnswer,
+                    'is_correct' => $answerIndex == $question->correct_answer_index,
                 ];
             }
 
             if (empty($studentResponses)) {
                 Log::warning('No valid responses to analyze in callGemini');
-                return [
-                    'points_forts' => ['Aucune réponse analysée'],
-                    'domaines_d_amélioration' => ['Réponses manquantes'],
-                    'recommandations' => ['Vérifiez les questions'],
-                    'recommended_audience' => $isGeneral ? 'etudiant_maroc' : null,
-                ];
+                throw new \Exception('No valid responses available for analysis');
             }
 
-            $prompt = "Analysez les réponses suivantes d’un utilisateur ayant pour objectif '$goal' à un quiz. "
-                . "Retournez UNIQUEMENT un objet JSON valide avec les champs suivants :\n"
+            $prompt = "Analyze the following quiz responses from a user with the goal '$goal'. "
+                . "Provide a structured feedback in JSON format with the following fields:\n"
                 . "{\n"
-                . "  \"points_forts\": [\"...\"],\n"
-                . "  \"domaines_d_amélioration\": [\"...\"],\n"
-                . "  \"recommandations\": [\"...\"]\n";
-            if ($isGeneral) {
-                $prompt .= ",  \"recommended_audience\": \"etudiant_maroc|etudiant_etranger|entrepreneur|salarie_etat|salarie_prive\"\n";
-            }
-            $prompt .= "}\n"
-                . "Réponses de l’utilisateur : " . json_encode($studentResponses);
+                . "  \"points_forts\": [\"string\", ...],\n"
+                . "  \"domaines_d_amélioration\": [\"string\", ...],\n"
+                . "  \"recommandations\": [\"string\", ...],\n"
+                . "  \"recommended_audience\": \"etudiant_maroc|etudiant_etranger|entrepreneur|salarie_etat|salarie_prive\"\n"
+                . "}\n"
+                . "For 'recommended_audience', choose the most suitable audience based on the user's responses. Consider the following:\n"
+                . "- 'etudiant_maroc': Strong academic focus, interest in local education or job markets.\n"
+                . "- 'etudiant_etranger': Interest in international opportunities or global education.\n"
+                . "- 'entrepreneur': Responses showing innovation, risk-taking, or business interest.\n"
+                . "- 'salarie_etat': Preference for stable, public-sector roles.\n"
+                . "- 'salarie_prive': Interest in dynamic, private-sector opportunities.\n"
+                . "Ensure the response is valid JSON without additional markdown or code blocks.\n"
+                . "User responses: " . json_encode($studentResponses, JSON_PRETTY_PRINT);
+
+            Log::info('Sending request to Gemini API', [
+                'prompt_length' => strlen($prompt),
+                'response_count' => count($studentResponses),
+            ]);
 
             $response = $client->post($apiUrl . '?key=' . $apiKey, [
-                'headers' => ['Content-Type' => 'application/json'],
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ],
                 'json' => [
                     'contents' => [
-                        ['parts' => [['text' => $prompt]]],
+                        [
+                            'parts' => [
+                                ['text' => $prompt]
+                            ]
+                        ]
+                    ],
+                    'generationConfig' => [
+                        'response_mime_type' => 'application/json',
                     ],
                 ],
+                'timeout' => 30,
             ]);
 
             $rawBody = $response->getBody()->getContents();
+            Log::info('Gemini API raw response', ['raw_body' => $rawBody]);
+
             $body = json_decode($rawBody, true);
             if (!isset($body['candidates'][0]['content']['parts'][0]['text'])) {
+                Log::error('Invalid Gemini API response structure');
                 throw new \Exception('Invalid API response structure');
             }
 
             $text = trim($body['candidates'][0]['content']['parts'][0]['text']);
-            if (strpos($text, '```json') === 0) {
-                $text = trim(substr($text, 7, -3));
-            }
-
             $parsedResponse = json_decode($text, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new \Exception('Failed to parse API response as JSON: ' . json_last_error_msg());
+                Log::error('Failed to parse Gemini response as JSON', [
+                    'text' => $text,
+                    'json_error' => json_last_error_msg(),
+                ]);
+                throw new \Exception('Failed to parse API response as JSON');
             }
 
+            // Valider la structure
+            $requiredKeys = ['points_forts', 'domaines_d_amélioration', 'recommandations', 'recommended_audience'];
+            foreach ($requiredKeys as $key) {
+                if (!isset($parsedResponse[$key])) {
+                    Log::warning('Missing required key in Gemini response', ['key' => $key]);
+                    throw new \Exception("Missing required key '$key' in API response");
+                }
+            }
+
+            // Valider recommended_audience
+            $validAudiences = ['etudiant_maroc', 'etudiant_etranger', 'entrepreneur', 'salarie_etat', 'salarie_prive'];
+            if (!in_array($parsedResponse['recommended_audience'], $validAudiences)) {
+                Log::warning('Invalid recommended_audience in Gemini response', [
+                    'recommended_audience' => $parsedResponse['recommended_audience'],
+                ]);
+                $parsedResponse['recommended_audience'] = 'etudiant_maroc'; // Fallback
+            }
+
+            Log::info('Gemini API parsed response', ['response' => $parsedResponse]);
             return $parsedResponse;
         } catch (\Exception $e) {
-            Log::error('Error in callGemini', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
-            return [
-                'points_forts' => ['Effort fourni'],
-                'domaines_d_amélioration' => ['Erreur API'],
-                'recommandations' => ['Vérifiez les logs'],
-                'recommended_audience' => $isGeneral ? 'etudiant_maroc' : null,
+            Log::error('Error in callGemini', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            $fallback = [
+                'points_forts' => ['Effort fourni dans le test'],
+                'domaines_d_amélioration' => ['Analyse impossible : ' . $e->getMessage()],
+                'recommandations' => ['Réessayez ou contactez le support'],
+                'recommended_audience' => 'etudiant_maroc',
             ];
+
+            return $fallback;
         }
     }
 }

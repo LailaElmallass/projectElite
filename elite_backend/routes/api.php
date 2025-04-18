@@ -12,10 +12,11 @@ use App\Http\Controllers\InterviewController;
 use App\Http\Controllers\JobOfferController;
 use App\Http\Controllers\DiffusionWorkshopController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ContactController;
 
 /*
 |--------------------------------------------------------------------------
-| Routes publiques
+| Public Routes
 |--------------------------------------------------------------------------
 */
 Route::post('/register', [AuthController::class, 'register'])->name('register');
@@ -23,41 +24,41 @@ Route::post('/login', [AuthController::class, 'login'])->name('login');
 
 /*
 |--------------------------------------------------------------------------
-| Routes protégées par authentification
+| Authenticated Routes
 |--------------------------------------------------------------------------
 */
-Route::middleware('auth:sanctum')->get('/test-auth', function () {
-    return response()->json(['user' => Auth::user()]);
-});
-
 Route::middleware('auth:sanctum')->group(function () {
-    // Authentification et utilisateur
+    // Authentication and User
     Route::get('/user', [AuthController::class, 'getUser'])->name('user');
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+    Route::get('/test-auth', function () {
+        return response()->json(['user' => Auth::user()]);
+    });
 
-    // Profil utilisateur
+    // User Profile
     Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');
     Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::put('/password', [ProfileController::class, 'updatePassword'])->name('profile.update-password');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
-    // dashboard 
-    Route::middleware('auth:sanctum')->group(function () {
-        Route::get('/dashboard', [DashboardController::class, 'userDashboard'])->name('user-dashboard');
-        Route::get('/coach_dashboard', [DashboardController::class, 'coachDashboard'])->name('coach-dashboard');
-        Route::get('/entreprise_dashboard', [DashboardController::class, 'entrepriseDashboard'])->name('entreprise-dashboard');
-        Route::get('/admin_dashboard', [DashboardController::class, 'adminDashboard'])->name('admin-dashboard');
-    });
+    // Dashboards
+    Route::get('/dashboard', [DashboardController::class, 'userDashboard'])->name('user-dashboard');
+    Route::get('/coach_dashboard', [DashboardController::class, 'coachDashboard'])->name('coach-dashboard');
+    Route::get('/entreprise_dashboard', [DashboardController::class, 'entrepriseDashboard'])->name('entreprise-dashboard');
+    Route::get('/admin_dashboard', [DashboardController::class, 'adminDashboard'])->name('admin-dashboard');
 
-    // Gestion des utilisateurs
+    // User Management
     Route::get('/users', [UserController::class, 'index'])->name('users.index');
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
-    Route::put('/users/student-status', [TestController::class, 'setStudentStatus'])->name('users.student-status');
+    Route::post('/users/student-status', [TestController::class, 'setStudentStatus'])->name('users.student-status'); // Changed to POST
     Route::put('/users/{id}', [UserController::class, 'update'])->name('users.update')->where('id', '[0-9]+');
     Route::delete('/users/{id}', [UserController::class, 'destroy'])->name('users.destroy');
 
-    // Recherche
+    // Search
     Route::get('/search', [UserController::class, 'search'])->name('search');
+
+    // Contact
+    Route::post('/contact', [ContactController::class, 'store'])->name('contact.store');
 
     // Tests
     Route::get('/tests/general', [TestController::class, 'getGeneralTest'])->name('tests.general');
@@ -67,7 +68,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/tests/{testId}/questions', [TestController::class, 'getQuestions'])->name('tests.questions');
     Route::get('/tests/{id}', [TestController::class, 'show'])->name('tests.show');
 
-    // Routes admin pour les tests
+    // Admin Routes for Tests
     Route::middleware('role:admin')->group(function () {
         Route::post('/tests', [TestController::class, 'storeTest'])->name('tests.store');
         Route::put('/tests/{id}', [TestController::class, 'updateTest'])->name('tests.update');
@@ -89,7 +90,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/formations/{formationId}/access', [FormationController::class, 'checkAccess'])->name('formations.access');
     Route::post('/formations/{formationId}/complete', [FormationController::class, 'completeFormation'])->name('formations.complete');
 
-    // Routes admin pour les formations
+    // Admin Routes for Formations
     Route::middleware('role:admin')->group(function () {
         Route::get('/admin/formations', [FormationController::class, 'index'])->name('admin.formations.index');
         Route::post('/admin/formations', [FormationController::class, 'store'])->name('admin.formations.store');
@@ -129,7 +130,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/job-offers/{id}/applications', [JobOfferController::class, 'applications'])->name('job-offers.applications');
     });
 
-    // Diffusions_workshops
+    // Diffusion Workshops
     Route::get('/diffusions-workshops', [DiffusionWorkshopController::class, 'index'])->name('diffusions-workshops.index');
     Route::middleware('role:admin,entreprise')->group(function () {
         Route::post('/diffusions-workshops', [DiffusionWorkshopController::class, 'store'])->name('diffusions-workshops.store');

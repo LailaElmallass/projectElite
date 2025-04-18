@@ -18,6 +18,7 @@ class Question extends Model
     ];
 
     protected $casts = [
+        'options' => 'array',
         'correct_answer_index' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
